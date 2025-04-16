@@ -154,6 +154,7 @@ def send_message(user: str, content: str) -> str:
 
 ### 使用Docker
 
+方法一：单独构建镜像
 ```bash
 # 构建镜像
 docker build -t feishuapp .
@@ -162,7 +163,21 @@ docker build -t feishuapp .
 docker run -it feishuapp bash
 ```
 
-## ⚙️ 配置说明
+方法二：使用Docker Compose（推荐）
+```bash
+# 启动所有服务（应用和数据库）
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f
+
+# 停止所有服务
+docker-compose down
+```
+
+使用Docker Compose可以一键启动整个应用环境，包括MySQL数据库和应用服务，更加方便和高效。
+
+## 🛠️ 配置说明
 
 复制`.env.example`文件命名为`.env`文件，包含以下配置:
 ```
@@ -191,8 +206,14 @@ FUNCTION_TRIGGER_FLAG=/run   # 可自定义触发函数调用的前缀
 
 ### 运行应用程序
 
+方法一：直接运行
 ```bash
 python main.py
+```
+
+方法二：使用Docker Compose
+```bash
+docker-compose up -d
 ```
 
 应用程序将:
@@ -201,6 +222,7 @@ python main.py
 3. 监听传入的消息
 4. 处理并执行大模型通过飞书发起的函数调用
 5. 将消息存储在MySQL数据库中
+
 
 ## 🗄️ 数据库结构
 

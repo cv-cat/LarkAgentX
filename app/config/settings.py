@@ -22,7 +22,9 @@ class Settings:
     LARK_WS_URL = "wss://msg-frontier.feishu.cn/ws/v2"
     
     FUNCTION_TRIGGER_FLAG = os.getenv("FUNCTION_TRIGGER_FLAG", "/run")
-    
+
+    AI_BOT_PREFIX = os.getenv("AI_BOT_PREFIX", "AI Bot:")
+
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
     OPENAI_API_BASE_URL = os.getenv("OPENAI_API_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     OPENAI_API_MODEL = os.getenv("OPENAI_API_MODEL", "qwen-plus")

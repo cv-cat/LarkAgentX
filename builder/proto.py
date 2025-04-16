@@ -1,3 +1,5 @@
+import json
+
 import static.proto_pb2 as FLY_BOOK_PROTO
 from protobuf_to_dict import protobuf_to_dict
 from app.utils.lark_utils import generate_request_cid
@@ -136,10 +138,14 @@ class ProtoBuilder:
 
     @staticmethod
     def decode_receive_msg_proto(message):
-        all_messages = []
         fromId = None
         ChatId = None
-        ReceiveTextContent = ''
+        ReceiveTextContent = {
+            'fromId': None,
+            'chatId': None,
+            'chatType': None,
+            'content': None
+        }
         Frame = FLY_BOOK_PROTO.Frame()
         Frame.ParseFromString(message)
         Frame = protobuf_to_dict(Frame)
@@ -163,27 +169,29 @@ class ProtoBuilder:
                     content = v['content']
                     chatId = v['chatId']
                     chatType = v['chatType']
+                    ReceiveTextContent['fromId'] = fromId
+                    ReceiveTextContent['chatId'] = chatId
+                    ReceiveTextContent['chatType'] = chatType
                     if message_type == 4:
+                        receive_content = ''
                         TextContent = FLY_BOOK_PROTO.TextContent()
                         TextContent.ParseFromString(content)
                         TextContent = protobuf_to_dict(TextContent)
                         v['content'] = TextContent
                         dictionary = TextContent['richText']['elements']['dictionary']
+                        try:
+                            dictionary = dict(sorted(dictionary.items(), key=lambda item: int(item[0])))
+                        except:
+                            pass
                         for k, v in dictionary.items():
                             property = v['property']
                             TextProperty = FLY_BOOK_PROTO.TextProperty()
                             TextProperty.ParseFromString(property)
                             TextProperty = protobuf_to_dict(TextProperty)
                             v['property'] = TextProperty
-                            ReceiveTextContent += TextProperty['content']
-                            info = {
-                                'fromId': fromId,
-                                'chatId': chatId,
-                                'chatType': chatType,
-                                'content': ReceiveTextContent,
-                            }
-                            all_messages.append(info)
-        return Packet_sid, all_messages
+                            receive_content += TextProperty['content']
+                        ReceiveTextContent['content'] = receive_content
+        return Packet_sid, ReceiveTextContent
 
     @staticmethod
     def build_get_user_all_name_request_proto(request_id, user_id, chatId):

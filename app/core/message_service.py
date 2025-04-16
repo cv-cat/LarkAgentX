@@ -9,29 +9,17 @@ from datetime import datetime
 from app.db.models import Message
 from app.db.session import get_db_session, close_db_session
 from app.config.settings import settings
-from openai import OpenAI
+from app.core.llm_service import LLMService
 from fastmcp import Client
 from fastmcp.client.transports import PythonStdioTransport
-def my_log_handler(level, message: str, logger_name: str | None):
-    print(f"[Server Log - {level.upper()}] {logger_name or 'default'}: {message}")
+
 class MessageService:
     """Service for processing and storing messages"""
     
     def __init__(self, lark_client):
         self.lark_client = lark_client
         self.db = get_db_session()
-        
-        api_key = settings.OPENAI_API_KEY
-        self.api_key = api_key
-        if api_key:
-            self.openai_client = OpenAI(
-                api_key=api_key,
-                base_url=settings.OPENAI_API_BASE_URL,
-            )
-        else:
-            self.openai_client = None
-            logger.warning("未在配置中设置 OPENAI_API_KEY")
-        
+        self.llm_service = LLMService()
         self.mcp_transport = PythonStdioTransport("app/core/mcp_server.py", env={"PATHEXT": os.environ.get("PATHEXT", "")})
         self.system_message = {"role": "system", "content": "你是一个很有帮助的助手。当用户提问需要调用工具时，请使用 tools 中定义的函数。"}
     
@@ -47,16 +35,12 @@ class MessageService:
                 chat_id=chat_id,
                 message_time=datetime.now()
             )
-            
             self.db.add(message)
             self.db.commit()
-            
             message_source = f"群聊 {group_name}" if is_group_chat else "私聊"
             logger.info(f"收到{message_source}消息 - 用户: {user_name}, 内容: {content}")
-            
             if content.strip().startswith(settings.FUNCTION_TRIGGER_FLAG):
                 await self._handle_function_call(user_name, content, chat_id, is_group_chat)
-            
         except Exception as e:
             self.db.rollback()
             logger.error(f"存储消息时出错: {str(e)}")
@@ -67,8 +51,7 @@ class MessageService:
         try:
             logger.info(f"触发flag函数调用 - 用户: {user_name}, 内容: {content}")
             query = content.strip()[len(settings.FUNCTION_TRIGGER_FLAG):].strip()
-            
-            if not self.api_key:
+            if not self.llm_service.is_available():
                 error_msg = "未在配置中设置 OPENAI_API_KEY"
                 logger.error(error_msg)
                 self.lark_client.send_msg(error_msg, chat_id)
@@ -90,13 +73,8 @@ class MessageService:
                     self.system_message,
                     {"role": "user", "content": query}
                 ]
-                resp = self.openai_client.chat.completions.create(
-                    model=settings.OPENAI_API_MODEL,
-                    messages=messages,
-                    tools=tools
-                )
+                resp = self.llm_service.chat_completion(messages, tools)
                 msg = resp.choices[0].message
-                
                 response = ""
                 if msg.tool_calls:
                     call = msg.tool_calls[0]
@@ -104,23 +82,17 @@ class MessageService:
                     args = json.loads(call.function.arguments)
                     output = await mcp_client.call_tool(fn_name, args)
                     logger.info(f"调用函数 {fn_name} -> {output}")
-                    
                     messages.append(msg)
                     messages.append({
                         "role": "tool",
                         "content": output,
                         "tool_call_id": call.id
                     })
-                    summary = self.openai_client.chat.completions.create(
-                        model=settings.OPENAI_API_MODEL,
-                        messages=messages
-                    )
+                    summary = self.llm_service.chat_completion(messages)
                     response = summary.choices[0].message.content
                 else:
                     response = msg.content
-                
                 self.lark_client.send_msg(response, chat_id)
-            
         except Exception as e:
             logger.error(f"处理flag函数调用时出错: {str(e)}")
             error_msg = f"执行错误: {str(e)}"

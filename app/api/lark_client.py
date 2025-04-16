@@ -133,30 +133,28 @@ class LarkClient:
             LarkClient.start_message_processor()
             async for message in websocket:
                 try:
-                    packet_sid, all_messages = ProtoBuilder.decode_receive_msg_proto(message)
+                    packet_sid, ReceiveTextContent = ProtoBuilder.decode_receive_msg_proto(message)
                     await self.send_ack(websocket, packet_sid)
-                    asyncio.run_coroutine_threadsafe(self.process_msg(all_messages, message_handler), LarkClient.loop)
+                    asyncio.run_coroutine_threadsafe(self.process_msg(ReceiveTextContent, message_handler), LarkClient.loop)
                 except Exception as e:
                     print(f"Error processing message: {e}")
                     continue
 
-    async def process_msg(self, all_messages, message_handler):
-        for msg in all_messages:
-            from_id, chat_id, chat_type, content = msg['fromId'], msg['chatId'], msg['chatType'], msg[
-                'content']
-            user_name = self.get_other_user_all_name(from_id, chat_id)
-            is_group_chat = (chat_type == 2)
-            group_name = None
-            if is_group_chat:
-                group_name = self.get_group_name(chat_id)
-            await message_handler(
-                user_name=user_name,
-                user_id=from_id,
-                content=content,
-                is_group_chat=is_group_chat,
-                group_name=group_name,
-                chat_id=chat_id
-            )
+    async def process_msg(self, msg, message_handler):
+        from_id, chat_id, chat_type, content = msg['fromId'], msg['chatId'], msg['chatType'], msg['content']
+        user_name = self.get_other_user_all_name(from_id, chat_id)
+        is_group_chat = (chat_type == 2)
+        group_name = None
+        if is_group_chat:
+            group_name = self.get_group_name(chat_id)
+        await message_handler(
+            user_name=user_name,
+            user_id=from_id,
+            content=content,
+            is_group_chat=is_group_chat,
+            group_name=group_name,
+            chat_id=chat_id
+        )
 
 
 if __name__ == '__main__':

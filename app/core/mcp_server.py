@@ -3,18 +3,16 @@ import os
 import sys
 import random
 import datetime
-
 import requests
 from loguru import logger
 from sqlalchemy import func, desc
 from mcp.server.fastmcp import FastMCP
 
 
-
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
-from app.config.settings import Settings
+from app.core.llm_service import LLMService
 from app.db.session import get_db_session, close_db_session
 from app.db.models import Message
 from app.api.auth import get_auth
@@ -22,6 +20,8 @@ from app.api.lark_client import LarkClient
 
 mcp = FastMCP("LARK_MCP_SERVER")
 registered_tools = []
+llm_service = LLMService()
+
 
 def register_tool(name: str, description: str):
     def decorator(func):
@@ -29,6 +29,35 @@ def register_tool(name: str, description: str):
         registered_tools.append((name, description))
         return func
     return decorator
+
+@register_tool(name="list_tools", description="List all available tools and their descriptions")
+def list_tools() -> str:
+    result = "🛠️ 当前可用功能列表：\n"
+    for name, desc in registered_tools:
+        result += f"- `{name}`：{desc}\n"
+    return result
+
+@register_tool(name="extra_order_from_content", description="提取文字中的订单信息，包括订单号、商品名称、数量等，以json格式返回")
+def extra_order_from_content(content: str) -> str:
+    """
+    提取订单信息
+    :param content: 消息内容
+    :return: 提取的订单信息
+    """
+    res = llm_service.chat_completion(
+        messages=[
+            {"role": "user", "content": content},
+            {"role": "system", "content": "请提取订单信息，包括订单号、商品名称、数量等，以json格式返回"},
+        ],
+        tools=None,
+        model="qwen-plus"
+    )
+    if res and res.choices:
+        content = res.choices[0].message.content
+        if content:
+            return content
+    return "未能提取到订单信息，请检查消息内容是否包含有效的订单信息。"
+
 
 @register_tool(name="tell_joke", description="Tell a random joke")
 def tell_joke() -> str:
@@ -46,41 +75,6 @@ def get_time() -> str:
     return f"当前时间是 {now.strftime('%Y-%m-%d %H:%M:%S')}"
 
 
-@register_tool(name="roll_dice", description="Roll a dice with a given number of sides")
-def roll_dice(sides: int = 6) -> str:
-    result = random.randint(1, sides)
-    return f"🎲 你掷出了：{result}"
-
-
-@register_tool(name="make_todo_list", description="Create a simple todo list from comma-separated tasks")
-def make_todo_list(tasks: str) -> str:
-    task_list = [task.strip() for task in tasks.split(',')]
-    return "\n".join(f"- [ ] {task}" for task in task_list)
-
-@register_tool(name="translate_to_chinese", description="Translate an English word to Chinese")
-def translate_to_chinese(word: str) -> str:
-    dictionary = {
-        "apple": "苹果",
-        "banana": "香蕉",
-        "computer": "电脑",
-        "sun": "太阳",
-        "moon": "月亮"
-    }
-    return dictionary.get(word.lower(), "这个词我还没学会呢~")
-
-
-@register_tool(name="countdown", description="Create a countdown from a given number")
-def countdown(start: int) -> str:
-    if start < 1:
-        return "请输入大于 0 的数字"
-    return " → ".join(str(i) for i in range(start, 0, -1)) + " → 🚀"
-
-
-@register_tool(name="random_color", description="Generate a random hex color")
-def random_color() -> str:
-    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
-
-
 @register_tool(name="fortune", description="Draw a random fortune")
 def fortune() -> str:
     fortunes = [
@@ -92,43 +86,6 @@ def fortune() -> str:
     ]
     return random.choice(fortunes)
 
-@register_tool(name="list_tools", description="List all available tools and their descriptions")
-def list_tools() -> str:
-    result = "🛠️ 当前可用功能列表：\n"
-    for name, desc in registered_tools:
-        result += f"- `{name}`：{desc}\n"
-    return result
-
-# @register_tool(name="get_weather", description="获得指定地区的天气预报 {city:城市名称}")
-# def get_weather(city: str) -> str:
-#     """获取指定城市的天气预报"""
-#     try:
-#         wea_api_key = Settings.get("WEATHER_API_KEY", None)
-#         if wea_api_key is None:
-#             return "天气 API 密钥未设置，请联系管理员。"
-#         geo_url = 'https://restapi.amap.com/v3/geocode/geo'
-#         geo_params = {
-#             'key': wea_api_key,
-#             'address': city,
-#         }
-#         adcode = 0
-#         geo_res = requests.get(geo_url, params=geo_params).json()
-#         if geo_res['status'] == '1':
-#             adcode = geo_res['geocodes'][0]['adcode']
-#         url = 'https://restapi.amap.com/v3/weather/weatherInfo'
-#         params = {
-#             'key': wea_api_key,
-#             'city': adcode,
-#             'extensions': 'all'
-#         }
-#         res = requests.get(url, params=params).json()
-#         if res['status'] == '1':
-#             return res
-#         else:
-#             return f"获取天气信息失败: {res['info']}"
-#     except Exception as e:
-#         logger.error(f"获取天气信息失败: {str(e)}")
-#         return f"获取天气信息失败: {str(e)}"
 
 @register_tool(name="count_daily_speakers", description="获取今天发言的人数统计")
 def count_daily_speakers() -> str:
