@@ -180,26 +180,28 @@ docker-compose down
 ## 🛠️ 配置说明
 
 复制`.env.example`文件命名为`.env`文件，包含以下配置:
-```
-# 飞书API设置 - 只需配置LARK_COOKIE即可，无需配置飞书机器人
-LARK_APP_ID=your_app_id
-LARK_APP_SECRET=your_app_secret
-LARK_COOKIE=your_lark_cookie   # 只需配置此项，无需飞书机器人配置
 
+```
 # 数据库设置
 DB_HOST=localhost
 DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=123456
 DB_NAME=lark_messages
-DB_USER=username
-DB_PASSWORD=password
 
-# OpenAI API配置
-OPENAI_API_KEY=your_openai_api_key
-OPENAI_API_BASE=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4-turbo-preview
+# 飞书的Cookie设置 - 只需配置LARK_COOKIE即可，告别飞书机器人
+LARK_COOKIE=""
 
-# 函数调用触发设置
-FUNCTION_TRIGGER_FLAG=/run   # 可自定义触发函数调用的前缀
+# 调用函数的触发前缀 （以FUNCTION_TRIGGER_FLAG开头的消息会被大模型解析，所有消息都会被记录到数据库，无论是否以该前缀开头）
+FUNCTION_TRIGGER_FLAG="/run"
+
+# 机器人发言前缀 （暂未使用）
+AI_BOT_PREFIX="Lark AI Bot:"
+
+# OpenAI API配置 默认是通义千问的，满足OpenAI的大模型厂商都可以
+OPENAI_API_KEY=""
+OPENAI_API_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+OPENAI_API_MODEL="qwen-plus"
 ```
 
 ## 🚀 使用指南
