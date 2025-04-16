@@ -231,6 +231,27 @@ class ProtoBuilder:
         return translation
 
     @staticmethod
+    def decode_group_info_response_proto(message):
+        nickname = None
+        Packet = FLY_BOOK_PROTO.Packet()
+
+        Packet.ParseFromString(message)
+        Packet = protobuf_to_dict(Packet)
+        if 'payload' in Packet:
+            payload = Packet['payload']
+            UserInfo = FLY_BOOK_PROTO.UserInfo()
+            UserInfo.ParseFromString(payload)
+            UserInfo = protobuf_to_dict(UserInfo)
+            Packet['payload'] = UserInfo
+            detail = UserInfo['userInfoDetail']['detail']
+            nickname = detail['nickname1'] if 'nickname1' in detail else None
+            if not nickname:
+                nickname = detail['nickname4'] if 'nickname4' in detail else None
+        if nickname:
+            nickname = nickname.decode('utf-8')
+        return nickname
+
+    @staticmethod
     def build_get_group_name_request_proto(request_id, chatId):
         Packet = FLY_BOOK_PROTO.Packet()
         Packet.payloadType = 1

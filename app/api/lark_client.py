@@ -88,8 +88,7 @@ class LarkClient:
         headers = HeaderBuilder.build_get_group_name_header().get()
         packet = ProtoBuilder.build_get_group_name_request_proto(headers['x-request-id'], chat_id)
         response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
-        group_info = ProtoBuilder.decode_info_response_proto(response.content)
-        group_name = group_info[list(group_info.keys())[0]]
+        group_name = ProtoBuilder.decode_group_info_response_proto(response.content)
         return group_name
 
     async def send_ack(self, ws, packet_sid):
@@ -162,5 +161,9 @@ if __name__ == '__main__':
     lark_client = LarkClient(auth)
     fromId = 7478340774602522627
     chatId = 7478340637890854916
+    chatId = 7373962691750363140
     user_name = lark_client.get_other_user_all_name(fromId, chatId)
     print(user_name)
+
+    group_name = lark_client.get_group_name(chatId)
+    print(group_name)
