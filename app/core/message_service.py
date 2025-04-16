@@ -1,0 +1,134 @@
+"""
+Service for processing and storing Lark messages
+"""
+import json
+import os
+
+from loguru import logger
+from datetime import datetime
+from app.db.models import Message
+from app.db.session import get_db_session, close_db_session
+from app.config.settings import settings
+from openai import OpenAI
+from fastmcp import Client
+from fastmcp.client.transports import PythonStdioTransport
+def my_log_handler(level, message: str, logger_name: str | None):
+    print(f"[Server Log - {level.upper()}] {logger_name or 'default'}: {message}")
+class MessageService:
+    """Service for processing and storing messages"""
+    
+    def __init__(self, lark_client):
+        self.lark_client = lark_client
+        self.db = get_db_session()
+        
+        api_key = settings.OPENAI_API_KEY
+        self.api_key = api_key
+        if api_key:
+            self.openai_client = OpenAI(
+                api_key=api_key,
+                base_url=settings.OPENAI_API_BASE_URL,
+            )
+        else:
+            self.openai_client = None
+            logger.warning("未在配置中设置 OPENAI_API_KEY")
+        
+        self.mcp_transport = PythonStdioTransport("app/core/mcp_server.py", env={"PATHEXT": os.environ.get("PATHEXT", "")})
+        self.system_message = {"role": "system", "content": "你是一个很有帮助的助手。当用户提问需要调用工具时，请使用 tools 中定义的函数。"}
+    
+    async def process_message(self, user_name, user_id, content, is_group_chat, group_name, chat_id):
+        """Process and store a message in the database"""
+        try:
+            message = Message(
+                user_name=user_name,
+                user_id=user_id,
+                content=content,
+                is_group_chat=is_group_chat,
+                group_name=group_name,
+                chat_id=chat_id,
+                message_time=datetime.now()
+            )
+            
+            self.db.add(message)
+            self.db.commit()
+            
+            message_source = f"群聊 {group_name}" if is_group_chat else "私聊"
+            logger.info(f"收到{message_source}消息 - 用户: {user_name}, 内容: {content}")
+            
+            if content.strip().startswith(settings.FUNCTION_TRIGGER_FLAG):
+                await self._handle_function_call(user_name, content, chat_id, is_group_chat)
+            
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"存储消息时出错: {str(e)}")
+
+    
+    async def _handle_function_call(self, user_name, content, chat_id, is_group_chat):
+        """处理flag触发的函数调用请求并发送响应"""
+        try:
+            logger.info(f"触发flag函数调用 - 用户: {user_name}, 内容: {content}")
+            query = content.strip()[len(settings.FUNCTION_TRIGGER_FLAG):].strip()
+            
+            if not self.api_key:
+                error_msg = "未在配置中设置 OPENAI_API_KEY"
+                logger.error(error_msg)
+                self.lark_client.send_msg(error_msg, chat_id)
+                return
+            
+            async with Client(self.mcp_transport) as mcp_client:
+                tools = []
+                for tool in await mcp_client.list_tools():
+                    info = tool.model_dump() if hasattr(tool, "model_dump") else tool.dict()
+                    tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": info["name"],
+                            "description": info.get("description", ""),
+                            "parameters": info.get("parameters", {})
+                        }
+                    })
+                messages = [
+                    self.system_message,
+                    {"role": "user", "content": query}
+                ]
+                resp = self.openai_client.chat.completions.create(
+                    model=settings.OPENAI_API_MODEL,
+                    messages=messages,
+                    tools=tools
+                )
+                msg = resp.choices[0].message
+                
+                response = ""
+                if msg.tool_calls:
+                    call = msg.tool_calls[0]
+                    fn_name = call.function.name
+                    args = json.loads(call.function.arguments)
+                    output = await mcp_client.call_tool(fn_name, args)
+                    logger.info(f"调用函数 {fn_name} -> {output}")
+                    
+                    messages.append(msg)
+                    messages.append({
+                        "role": "tool",
+                        "content": output,
+                        "tool_call_id": call.id
+                    })
+                    summary = self.openai_client.chat.completions.create(
+                        model=settings.OPENAI_API_MODEL,
+                        messages=messages
+                    )
+                    response = summary.choices[0].message.content
+                else:
+                    response = msg.content
+                
+                self.lark_client.send_msg(response, chat_id)
+            
+        except Exception as e:
+            logger.error(f"处理flag函数调用时出错: {str(e)}")
+            error_msg = f"执行错误: {str(e)}"
+            try:
+                self.lark_client.send_msg(error_msg, chat_id)
+            except Exception as send_err:
+                logger.error(f"发送错误消息失败: {str(send_err)}")
+    
+    def close(self):
+        """Close database session"""
+        close_db_session(self.db) 
