@@ -160,7 +160,7 @@ docker run -it feishuapp bash
 
 ## ⚙️ 配置说明
 
-修改项目根目录中的`.env`文件，包含以下配置:
+复制`.env.example`文件命名为`.env`文件，包含以下配置:
 ```
 # 飞书API设置 - 只需配置LARK_COOKIE即可，无需配置飞书机器人
 LARK_APP_ID=your_app_id
