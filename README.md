@@ -1,6 +1,6 @@
 # Lark MCP - 飞书全场景 Function Call AI 助手 🚀
 
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Node.js Version](https://img.shields.io/badge/nodejs-18%2B-blue)](https://nodejs.org/zh-cn/)
 
 一个基于飞书(Lark)的全场景MCP Function Call AI Agent，实现大模型通过飞书进行函数调用和消息处理。
@@ -134,7 +134,7 @@ def send_message(user: str, content: str) -> str:
 ## 🔧 环境要求
 
 - Python 3.10+
-- Node.js 20+
+- Node.js 18+
 - MySQL数据库
 
 ## 📦 安装方法
