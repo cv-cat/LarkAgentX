@@ -1,0 +1,855 @@
+syntax = "proto3";
+
+
+
+message Frame {
+    optional uint64 seqid = 1;
+    optional uint64 logid = 2;
+    optional int32 service = 3;
+    optional int32 method = 4;
+    repeated ExtendedEntry headers = 5;
+    optional string payloadEncoding = 6;
+    optional string payloadType = 7;
+    optional bytes payload = 8;
+}
+
+message Packet {
+    optional string sid = 1;
+    optional PayloadType payloadType = 2;
+    optional int32 cmd = 3;
+    optional uint32 status = 4;
+    optional bytes payload = 5;
+    optional string cid = 6;
+    optional PipeEntity pipeEntity = 7;
+    repeated VersionPayload versionPayloads = 8;
+    repeated PipeEntity pipeEntities = 9;
+    optional uint32 waitRetryInterval = 10;
+    optional int32 command = 11;
+    optional uint64 cursor = 12;
+}
+
+message PushMessagesRequest {
+    map<string, entities.Message> messages = 1;
+    map<string, bool> participatedMessageIds = 3;
+    map<string, bool> forcePush = 8;
+    map<string, bool> messagesAtMe = 9;
+}
+
+message PutMessageRequest {
+    optional Type type = 1;
+    optional Content content = 2;
+    optional string chatId = 3;
+    optional string rootId = 4;
+    optional string parentId = 5;
+    optional string cid = 6;
+    optional bool isNotified = 7;
+    optional bool sendToChat = 8;
+    optional int32 version = 9;
+    optional bool isThreadGroupTopic = 10;
+    optional bool isAnonymous = 11;
+    repeated string leftStaticResourceKeys = 101;
+    optional bytes thriftMessage = 102;
+}
+
+
+message PutChatRequest {
+    optional Type type = 1;
+    repeated string userIds = 2;
+    optional string groupName = 3;
+    optional string groupDesc = 4;
+    optional bool isPublic = 5;
+    repeated string chatterIds = 6;
+    optional string organizationId = 7;
+    optional string fromChatId = 8;
+    repeated string initMessageIds = 9;
+    optional string iconKey = 10;
+    map<string, DocPermType> docPerms = 11;
+    optional bool isCrossTenant = 12;
+    optional bool isPublicV2 = 13;
+    map<string, DocPair> docPerms2 = 15;
+    optional string cid = 16;
+
+    enum DocPermType {
+        UNKNOWN = 0;
+        READ = 1;
+        EDIT = 2;
+    }
+
+    message DocPair {
+        map<string, DocPermType> perms = 1;
+    }
+}
+
+message PutChatResponse {
+    optional Chat chat = 1;
+    optional FeedCard feedCard = 2;
+}
+
+message UniversalSearchRequest {
+    optional SearchCommonRequestHeader header = 1;
+}
+
+
+
+message UniversalSearchResponse {
+    optional SearchCommonResponseHeader header = 1;
+    repeated SearchResult results = 2;
+    optional SearchExtraFields extraFields = 3;
+    repeated FailedEntityInfo failedEntityInfos = 5;
+
+
+    message SearchResult {
+        optional string id = 1;
+        optional SearchEntityType type = 2;
+        optional string titleHighlighted = 3;
+        optional string summaryHighlighted = 4;
+        optional string extrasHighlighted = 5;
+        optional string avatarKey = 6;
+        optional string extraInfoSeparator = 10;
+    }
+
+    enum SearchEntityType {
+        UNKNOWN = 0;
+        USER = 1;
+        BOT = 2;
+        GROUP_CHAT = 3;
+        CRYPTO_P2P_CHAT = 4;
+        MESSAGE = 5;
+        DOC = 7;
+        WIKI = 8;
+        APP = 9;
+        ONCALL = 10;
+        THREAD = 11;
+        QA_CARD = 12;
+        URL = 13;
+        DEPARTMENT = 14;
+        PANO = 15;
+        SLASH_COMMAND = 16;
+        SECTION = 17;
+        RESOURCE = 18;
+        CUSTOMIZATION = 19;
+        FACILITY = 20;
+        MAIL_CONTACT = 21;
+        CHAMELEON = 22;
+        CALENDAR_EVENT = 23;
+    }
+
+
+    message SearchCommonResponseHeader {
+        optional string searchSession = 1;
+        optional int32 sessionSeqId = 2;
+        optional int32 total = 3;
+        optional bool hasMore = 4;
+        optional string paginationToken = 5;
+        optional InvokeAbnormalNotice invokeAbnormalNotice = 6;
+        optional ColdAndHotStorageInfo storageInfo = 7;
+
+        enum InvokeAbnormalNotice {
+          INVOKE_NORMAL = 0;
+          REQUEST_CANCELED = 1;
+          VERSION_SWITCH = 2;
+          QUERY_LENGTH_EXCEEDED = 3;
+        }
+
+        message ColdAndHotStorageInfo {
+            optional bool isNeedColdData = 1;
+            optional int32 timeSize = 2;
+            optional TimeUnit timeUnit = 3;
+            optional string timeText = 4;
+            optional HasMoreInfo hasMoreInfo = 5;
+
+            enum TimeUnit {
+                TimeUNKNOWN = 0;
+                DAY = 1;
+                WEEK = 2;
+                MONTH = 3;
+                YEAR = 4;
+            }
+            enum HasMoreInfo {
+                UNKNOWN = 0;
+                HOT_HAS_MORE = 1;
+                HOT_HAS_NO_MORE = 2;
+                COLD_HAS_MORE = 3;
+                COLD_HAS_NO_MORE = 4;
+            }
+        }
+    }
+
+    message SearchExtraFields {
+        optional bytes chatterPermissionResponse = 1;
+    }
+
+    message FailedEntityInfo {
+        optional SearchEntityType entityType = 1;
+        optional bool isNeedLocalFallback = 2;
+        optional string localPaginationToken = 3;
+
+        enum SearchEntityType {
+            UNKNOWN = 0;
+            USER = 1;
+            BOT = 2;
+            GROUP_CHAT = 3;
+            CRYPTO_P2P_CHAT = 4;
+            MESSAGE = 5;
+            DOC = 7;
+            WIKI = 8;
+            APP = 9;
+            ONCALL = 10;
+            THREAD = 11;
+            QA_CARD = 12;
+            URL = 13;
+            DEPARTMENT = 14;
+            PANO = 15;
+            SLASH_COMMAND = 16;
+            SECTION = 17;
+            RESOURCE = 18;
+            CUSTOMIZATION = 19;
+            FACILITY = 20;
+            MAIL_CONTACT = 21;
+            CHAMELEON = 22;
+            CALENDAR_EVENT = 23;
+        }
+    }
+}
+
+message SearchCommonRequestHeader {
+    optional string searchSession = 1;
+    optional int32 sessionSeqId = 2;
+    optional string query = 3;
+    optional string paginationToken = 4;
+    optional BaseEntity.SearchContext searchContext = 5;
+    optional string locale = 6;
+    optional string impressionId = 7;
+    optional SearchExtraParam extraParam = 8;
+    optional Layout titleLayout = 9;
+    optional Layout summaryLayout = 10;
+    optional int32 pageSize = 11;
+    optional Layout sectionSummaryLayout = 13;
+    message Layout {
+        optional int32 line = 1;
+        optional int32 width = 2;
+    }
+}
+message SearchExtraParam {
+    optional bytes chatterPermissionRequest = 1;
+    optional int32 queryInputState = 2;
+}
+message BaseEntity {
+    message SearchContext {
+        optional string tagName = 1;
+        repeated EntityItem entityItems = 2;
+        optional CommonFilter commonFilter = 3;
+        optional string sourceKey = 5;
+    }
+}
+
+message CommonFilter {
+    optional bool includeOuterTenant = 1;
+    optional string chatId = 2;
+}
+message UserFilter {
+    message FieldValues {
+        repeated string values = 1;
+    }
+    optional bool isResigned = 1;
+    optional bool haveChatter = 2;
+    map<string, FieldValues> customFields = 3;
+    optional bool exclude = 4;
+}
+message GroupChatFilter {
+    repeated SearchType searchTypes = 1;
+    repeated string chatMemberIds = 2;
+    repeated string excludedChatIds = 3;
+    optional bool searchCrypto = 4;
+    optional bool addableAsUser = 5;
+}
+
+enum SearchType {
+    TYPE_UNSPECIFIED = 0;
+    SEARCH_TYPE_1 = 1;
+    SEARCH_TYPE_2 = 2;
+}
+message EntityItem {
+    optional SearchEntityType type = 1;
+    optional EntityFilter filter = 2;
+    repeated string boostChatIds = 4;
+    optional string localPaginationToken = 5;
+
+    message EntityFilter {
+        oneof filter {
+          UserFilter userFilter = 1;
+          GroupChatFilter groupChatFilter = 2;
+        }
+    }
+    enum SearchEntityType {
+        UNKNOWN = 0;
+        USER = 1;
+        BOT = 2;
+        GROUP_CHAT = 3;
+        CRYPTO_P2P_CHAT = 4;
+        MESSAGE = 5;
+        DOC = 7;
+        WIKI = 8;
+        APP = 9;
+        ONCALL = 10;
+        THREAD = 11;
+        QA_CARD = 12;
+        URL = 13;
+        DEPARTMENT = 14;
+        PANO = 15;
+        SLASH_COMMAND = 16;
+        SECTION = 17;
+        RESOURCE = 18;
+        CUSTOMIZATION = 19;
+        FACILITY = 20;
+        MAIL_CONTACT = 21;
+        CHAMELEON = 22;
+        CALENDAR_EVENT = 23;
+    }
+}
+
+message Content {
+    optional string text = 1;
+    optional string imageKey = 2;
+    optional bool isOriginSource = 31;
+    optional string title = 3;
+    repeated string attachments = 4;
+    optional bool isNotified = 5;
+    optional string audioKey = 7;
+    optional int32 audioDuration = 8;
+    optional string chatId = 9;
+    optional string cryptoToken = 10;
+    optional string fileKey = 6;
+    optional string fileName = 11;
+    optional string fileMime = 12;
+    optional int64 fileSize = 13;
+    optional FileTransMode fileTransMode = 28;
+    optional string senderDeviceId = 29;
+    optional RichText richText = 14;
+    optional int32 duration = 15;
+    optional int32 attendeesCount = 17;
+    optional bool isGroupAnnouncement = 18;
+    optional string stickerSetId = 24;
+    optional string stickerId = 25;
+    optional string shareUserId = 27;
+
+    enum FileTransMode {
+        UNKNOWN = 0;
+        LAN_TRANS = 1;
+    }
+}
+message entities {
+    message Message {
+        optional string id = 1;
+        optional Type type = 2;
+        optional string fromId = 3;
+        optional int64 createTime = 4;
+        optional bytes content = 5;
+        optional Status status = 6;
+        optional FromType fromType = 7;
+        optional string rootId = 8;
+        optional string parentId = 9;
+        optional string chatId = 10;
+        optional int64 lastModifyTime = 11;
+        optional string cid = 12;
+        optional int32 position = 13;
+        optional int64 updateTime = 14;
+        optional bool isNotified = 15;
+        optional string replyCount = 16;
+        optional string parentSourceMessageId = 17;
+        optional string rootSourceMessageId = 18;
+        optional bool isDing = 19;
+        optional string threadId = 20;
+        optional bool sendToChat = 21;
+        optional bool isTruncated = 22;
+        optional bool isRemoved = 23;
+        optional string channelId = 24;
+        optional int32 threadPosition = 28;
+        optional int64 removerId = 29;
+        optional string translateLanguage = 30;
+        optional RemoverType removerType = 31;
+        optional int32 noBadgedCount = 33;
+        optional bool isBadged = 34;
+        optional int32 badgeCount = 35;
+        optional int32 threadBadgeCount = 36;
+        optional int32 threadReplyCount = 37;
+        repeated string atOutChatterIds = 38;
+        optional string messageLanguage = 39;
+        optional bool isNoTraceRemoved = 41;
+        optional bool isAutoTranslatedByReceiver = 42;
+        optional MessageSensitivity sensitivity = 43;
+        optional bool isVisibleV2 = 44;
+        optional ChatType chatType = 46;
+        optional string originalSenderId = 47;
+        optional bool isStaticResourceMessageDeleted = 48;
+        optional int64 messagePipeVersion = 52;
+        optional bool isBatchCopyMessages = 53;
+        optional bool isSpecialFocus = 56;
+        optional bool isIncludeDocUrl = 58;
+        optional int64 cipherId = 59;
+        enum Type {
+            UNKNOWN = 0;
+            POST = 2;
+            FILE = 3;
+            TEXT = 4;
+            IMAGE = 5;
+            SYSTEM = 6;
+            AUDIO = 7;
+            EMAIL = 8;
+            SHARE_GROUP_CHAT = 9;
+            STICKER = 10;
+            MERGE_FORWARD = 11;
+            CALENDAR = 12;
+            CLOUD_FILE = 13;
+            CARD = 14;
+            MEDIA = 15;
+            SHARE_CALENDAR_EVENT = 16;
+            HONGBAO = 17;
+            GENERAL_CALENDAR = 18;
+            VIDEO_CHAT = 19;
+            LOCATION = 20;
+            COMMERCIALIZED_HONGBAO = 22;
+            SHARE_USER_CARD = 23;
+            TODO = 24;
+            FOLDER = 25;
+        }
+    }
+
+
+    enum FromType {
+        UNKNOWN_FROMTYPE = 0;
+        USER = 1;
+        BOT = 2;
+    }
+
+    enum Status {
+        UNKNOWN_STATUS = 0;
+        NORMAL = 1;
+        DELETED = 2;
+        MODIFIED = 3;
+    }
+
+    enum RemoverType {
+        UNKNOWN_REMOVERTYPE = 0;
+        GROUPOWNER = 1;
+        SYSADMIN = 2;
+        GROUPADMIN = 3;
+    }
+
+    enum MessageSensitivity {
+        UNKNOWN_SENSITIVITY = 0;
+        SAFE = 1;
+        DANGEROUS = 2;
+    }
+
+    enum ChatType {
+        UNKNOWN_CHAT_TYPE = 0;
+        P2P = 1;
+        GROUP = 2;
+        TOPIC_GROUP = 3;
+    }
+
+}
+
+message TextContent {
+    optional string text = 1;
+    optional RichText richText = 3;
+}
+
+message RichText {
+    repeated string elementIds = 1;
+    optional string innerText = 2;
+    optional RichTextElements elements = 3;
+    repeated string imageIds = 5;
+    repeated string atIds = 6;
+    repeated string anchorIds = 7;
+    repeated string i18nIds = 8;
+    repeated string mediaIds = 9;
+    repeated string docsIds = 10;
+    repeated string interactiveIds = 11;
+    repeated string mentionIds = 12;
+    int32 version = 13;
+}
+
+
+message RichTextElements {
+    map<string, RichTextElement> dictionary = 1;
+    map<string, RichTextElementStyleRefs> styleRefs = 2;
+    repeated RichTextStyle styles = 3;
+
+    message RichTextStyle {
+        optional string name = 1;
+        optional string value = 2;
+    }
+
+    message RichTextElementStyleRefs {
+        repeated int32 styleIds = 1 [packed = false];
+    }
+}
+
+
+message RichTextElement {
+    optional Tag tag = 1;
+    map<string, string> style = 2;
+    optional bytes property = 3;
+    repeated string childIds = 4;
+    repeated string styleKeys = 5;
+    enum Tag {
+        UNKNOWN_TAG = 0;
+        TEXT = 1;
+        IMG = 2;
+        P = 3;
+        FIGURE = 4;
+        AT = 5;
+        A = 6;
+        B = 7;
+        I = 8;
+        U = 9;
+        EMOTION = 10;
+        BUTTON = 11;
+        SELECT = 12;
+        PROGRESS_SELECT_OPTION = 13;
+        DIV = 14;
+        TEXTABLE_AREA = 15;
+        TIME = 16;
+        LINK = 17;
+        MEDIA = 18;
+        SELECTMENU = 19;
+        OVERFLOWMENU = 20;
+        DATEPICKER = 21;
+        DOCS = 22;
+        H1 = 23;
+        H2 = 24;
+        H3 = 25;
+        UL = 26;
+        OL = 27;
+        LI = 28;
+        QUOTE = 29;
+        CODE = 30;
+        CODE_BLOCK = 31;
+        HR = 32;
+        TIMEPICKER = 33;
+        DATETIMEPICKER = 34;
+        REACTION = 35;
+        MENTION = 36;
+    }
+}
+
+
+message TextProperty {
+    optional string content = 1;
+    optional string i18nKey = 2;
+    optional int32 numberOfLines = 3;
+}
+message ExtendedEntry {
+    optional string key = 1;
+    optional string value = 2;
+}
+
+
+enum PayloadType {
+    TYPE_UNKNOWN = 0;
+    PB2 = 1;
+    JSON = 2;
+}
+
+message PipeEntity {
+    optional string type = 1;
+    optional int64 id = 3;
+}
+
+message VersionPayload {
+    optional VersionRange versionRange = 1;
+    optional bytes payload = 2;
+}
+
+message VersionRange {
+    optional string start = 1;
+    optional string end = 2;
+}
+
+enum Type {
+    UNKNOWN = 0;
+    POST = 2;
+    FILE = 3;
+    TEXT = 4;
+    IMAGE = 5;
+    SYSTEM = 6;
+    AUDIO = 7;
+    EMAIL = 8;
+    SHARE_GROUP_CHAT = 9;
+    STICKER = 10;
+    MERGE_FORWARD = 11;
+    CALENDAR = 12;
+    CLOUD_FILE = 13;
+    CARD = 14;
+    MEDIA = 15;
+    SHARE_CALENDAR_EVENT = 16;
+    HONGBAO = 17;
+    GENERAL_CALENDAR = 18;
+    VIDEO_CHAT = 19;
+    LOCATION = 20;
+    COMMERCIALIZED_HONGBAO = 22;
+    SHARE_USER_CARD = 23;
+    TODO = 24;
+    FOLDER = 25;
+}
+
+message Chat {
+    optional string id = 1;
+    optional Type type = 2;
+    optional string lastMessageId = 3;
+    optional string name = 4;
+    optional string ownerId = 6;
+    optional int32 newMessageCount = 7;
+    optional Status status = 8;
+    optional int64 updateTime = 9;
+    optional string key = 10;
+    optional string description = 11;
+    optional int32 memberCount = 12;
+    optional bool isDepartment = 13;
+    optional bool isPublic = 14;
+    optional int32 lastMessagePosition = 15;
+    optional int32 userCount = 16;
+    optional string namePinyin = 17;
+    optional int64 createTime = 18;
+    optional bool isCustomerService = 19;
+    optional Role role = 20;
+    optional bool isCustomIcon = 21;
+    optional int32 noBadgedNewMessageCount = 22;
+    optional bool offEditGroupChatInfo = 23;
+    optional Announcement announcement = 24;
+    optional string tenantId = 25;
+    optional int64 updateTimeMs = 26;
+    optional bool isRemind = 27;
+    optional bool isDissolved = 30;
+    optional bool isMeeting = 31;
+    optional string lastVisibleMessageId = 32;
+    optional string lastThreadId = 33;
+    optional int32 newThreadCount = 34;
+    optional int32 lastThreadPosition = 35;
+    optional bool isCrypto = 36;
+    optional int32 noBadgedNewThreadCount = 37;
+    optional int32 threadStartPosition = 38;
+    optional ChatMode chatMode = 39;
+    optional bool isCrossTenant = 41;
+    optional bool isTenant = 42;
+    optional SupportView supportView = 43;
+    optional int64 joinTimeMs = 44;
+    optional int64 oncallId = 45;
+    optional int32 lastVisibleMessagePosition = 46;
+    optional int32 lastVisibleMessageNoBadgedCount = 47;
+    optional int32 readPosition = 48;
+    optional int32 readPositionBadgeCount = 49;
+    optional int32 lastMessagePositionBadgeCount = 50;
+    optional bool enableWatermark = 51;
+    optional string sidebarId = 53;
+    optional string namePy = 100;
+    map<string, string> i18nNames = 101 [deprecated = true];
+    optional I18nInf i18nInf = 102;
+    optional int32 readThreadPosition = 103;
+    optional int32 readThreadPositionBadgeCount = 104;
+    optional int32 lastThreadPositionBadgeCount = 105;
+    optional int32 lastVisibleThreadPosition = 106;
+    optional string lastVisibleThreadId = 107;
+    optional bool isPublicV2 = 109;
+    optional bool allowPost = 111;
+    optional int64 burnedTime = 112;
+    optional int32 putChatterApplyCount = 113;
+    optional bool showBanner = 114;
+    optional bool isLargeGroup = 115;
+    optional int32 firstChatMessagePosition = 116;
+    repeated int32 tags = 117 [packed = false];
+    map<string, string> extra = 118;
+    optional bool isSamePageMeeting = 119;
+    optional int64 myThreadsReadTimestamp = 120;
+    optional int64 myThreadsLastTimestamp = 121;
+
+    enum Type {
+        UNKNOWN = 0;
+        P2P = 1;
+        GROUP = 2;
+        TOPIC_GROUP = 3;
+    }
+
+    enum Status {
+        NORMAL = 0;
+        ARCHIVE = 1;
+        DELETED = 2;
+    }
+
+    enum ChatMode {
+        UNKNOWN_CHAT_MODE = 0;
+        DEFAULT = 1;
+        THREAD = 2;
+        THREAD_V2 = 3;
+    }
+
+    enum SupportView {
+        VIEW_UNKNOWN = 0;
+        VIEW_P2PGROUP = 1;
+        VIEW_MEETING = 2;
+        VIEW_THREAD = 3;
+        VIEW_CRYPTO = 4;
+    }
+
+    enum Role {
+        IGNORE = 0;
+        MEMBER = 1;
+        VISITOR = 2;
+        THREAD_FOLLOWER = 3;
+    }
+
+    message Announcement {
+        optional string content = 1;
+        optional int64 updateTime = 2;
+        optional string lastEditorId = 3;
+        optional string docUrl = 4;
+        optional bool enableOpendoc = 5;
+    }
+
+    message I18nInf {
+        map<string, string> i18nNames = 1;
+    }
+}
+
+
+message FeedCard {
+    optional string id = 1;
+    optional Type type = 2;
+    optional int64 updateTime = 3;
+    optional bool isDelayed = 4;
+    optional int64 parentCardId = 5;
+    optional int64 rankTime = 6;
+    optional FeedType feedType = 7;
+    optional string imprId = 8;
+    optional int64 updateTimeMs = 9;
+
+    enum Type {
+        UNKNOWN_TYPE = 0;
+        CHAT = 1;
+        MAIL = 2;
+        DOC = 3;
+        THREAD = 4;
+        BOX = 5;
+        OPENAPP = 6;
+        TOPIC = 7;
+        APP_CHAT = 8;
+    }
+
+    enum FeedType {
+        TYPE_UNKNOWN = 0;
+        TYPE_NEWS = 1;
+        TYPE_SOCIAL = 2;
+    }
+}
+
+message GetUserInfoRequest{
+    optional int64 chatId = 1;
+    optional int64 userId = 3;
+    optional int32 userType = 4;
+}
+
+// 18 {
+//        1 {
+//          13: 0x796d5f73
+//        }
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "id_id"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "hi_in"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "zh_cn"
+//        2: "qsj666"
+//      }
+//      18 {
+//        1: "ru_ru"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "zh_tw"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "ja_jp"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "de_de"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "fr_fr"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "vi_vn"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "ko_kr"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1 {
+//          12: 0x73755f6e
+//        }
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "th_th"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "pt_br"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "zh_hk"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1 {
+//          12: 0x73655f73
+//        }
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+//      18 {
+//        1: "it_it"
+//        2: "\344\271\224\344\270\226\345\230\211"
+//      }
+message Detail {
+    optional bytes nickname = 2;
+    optional bytes nickname1 = 4;
+    optional bytes nickname2 = 7;
+    optional bytes nickname3 = 13;
+    optional bytes nickname4 = 17;
+    repeated LocaleEntry locales = 18;
+}
+
+message LocaleEntry {
+  oneof key {
+    string key_string = 1;
+    uint32 key_numeric1 = 12;
+    uint32 key_numeric2 = 13;
+  }
+  string translation = 2;
+}
+
+message UserInfoDetail {
+    Detail detail = 2;
+}
+
+message UserInfo {
+    UserInfoDetail userInfoDetail = 1;
+}
+
+message GetGroupInfoRequest{
+    optional string chatId = 1;
+}
