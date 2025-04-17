@@ -136,7 +136,7 @@ class LarkClient:
                     await self.send_ack(websocket, packet_sid)
                     asyncio.run_coroutine_threadsafe(self.process_msg(ReceiveTextContent, message_handler), LarkClient.loop)
                 except Exception as e:
-                    print(f"Error processing message: {e}")
+                    # print(f"Error processing message: {e}")
                     continue
 
     async def process_msg(self, msg, message_handler):

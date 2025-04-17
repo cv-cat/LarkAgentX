@@ -1,4 +1,4 @@
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.jobstores.base import JobLookupError
 from loguru import logger
 
 from app.core.mcp_server import send_message
@@ -38,37 +38,60 @@ class ScheduleService:
         self.tasks = self.db.query(Schedule).filter(Schedule.active == True).all()
         for task in self.tasks:
             self.add_schedule(task)
-        self.scheduler.add_job(func=self.new_task_watcher, trigger='interval', seconds=5, id=f'-1')
+        self.scheduler.add_job(func=self.task_watcher, trigger='interval', seconds=5, id=f'-1')
         self.scheduler.start()
 
-    def new_task_watcher(self):
+    def task_watcher(self):
         ids = [t.id for t in self.tasks]
         news = (self.db.query(Schedule)
                 .filter(Schedule.active == True)
                 .filter(Schedule.id.notin_(ids))
                 .all()
                 )
+        if len(news) > 0:
+            logger.info(f'新增定时任务, {news}')
+        removed = (self.db.query(Schedule).filter(Schedule.active == False).all())
+        for removed_task in removed:
+            if removed_task.id in ids:
+                self.tasks = [t for t in self.tasks if t.id!= removed_task.id]
+                ids = [t.id for t in self.tasks]
+                self.remove_schedule(removed_task.id)
         for new in news:
             self.add_schedule(new)
+            self.tasks.append(new)
 
 
     def add_schedule(self, task: Schedule):
-        cron = task.cron
-        def run_task():
-            module = importlib.import_module(task.module_name)
-            func = getattr(module, task.function_name)
-            args = task.arguments
-            if callable(func):
-                result = func(*args)
-                send_message(task.created_by, result)
-        if len(cron.split(' ')) == 6:
-            cron = SecondCronTrigger.from_crontab(cron)
-        elif len(cron.split(' ')) == 5:
-            cron = CronTrigger.from_crontab(cron)
-        elif len(cron.split(' ')) == 7:
-            cron = YearCronTrigger.from_crontab(cron)
-        self.scheduler.add_job(run_task, cron, id=f'{task.id}')
-        logger.info(f'添加定时任务成功, {task}')
+        try:
+            cron = task.cron
+
+            def run_task(_task):
+                logger.info(f'开始执行定时任务, {_task}')
+                module = importlib.import_module(_task.module_name)
+                func = getattr(module, _task.function_name)
+                args = _task.arguments
+                if callable(func):
+                    result = func(*args)
+                    send_message(user_id=_task.created_by, content=result)
+                    logger.info(f'定时任务执行成功, {_task}')
+
+            if len(cron.split(' ')) == 6:
+                cron = SecondCronTrigger.from_crontab(cron)
+            elif len(cron.split(' ')) == 5:
+                cron = CronTrigger.from_crontab(cron)
+            elif len(cron.split(' ')) == 7:
+                cron = YearCronTrigger.from_crontab(cron)
+            self.scheduler.add_job(run_task, args=[task], trigger=cron, id=f'{task.id}')
+            logger.info(f'添加定时任务成功, {task}')
+        except Exception as e:
+            logger.error(f'添加定时任务失败, {task}, {e}')
+
+    def remove_schedule(self, task_id: int):
+        try:
+            self.scheduler.remove_job(f'{task_id}')
+        except JobLookupError:
+            pass
+        logger.info(f'删除定时任务成功, {task_id}')
 
     def close(self):
         close_db_session(self.db)

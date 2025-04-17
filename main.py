@@ -3,14 +3,17 @@ Lark Message Recorder - Main Entry Point
 Records all received Lark messages to a MySQL database.
 """
 import multiprocessing
-import os
+
 import sys
 import asyncio
 from loguru import logger
 
 from app.core.schedule_service import ScheduleService
+import logging
 
-
+logging.disable()
+logger.remove()
+logger.add(sys.stdout, level="INFO")
 def start_mcp_server():
     """Start the MCP server in a separate process"""
     logger.info("Starting MCP server...")

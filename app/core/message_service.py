@@ -16,12 +16,20 @@ from fastmcp.client.transports import PythonStdioTransport
 class MessageService:
     """Service for processing and storing messages"""
     
-    def __init__(self, lark_client):
+    def __init__(self, lark_client, scheduled_service):
         self.lark_client = lark_client
         self.db = get_db_session()
         self.llm_service = LLMService()
+        self.scheduled_service = scheduled_service
         self.mcp_transport = PythonStdioTransport("app/core/mcp_server.py", env={"PATHEXT": os.environ.get("PATHEXT", "")})
-        self.system_message = {"role": "system", "content": "你是一个很有帮助的助手。当用户提问需要调用工具时，请使用 tools 中定义的函数。"}
+        self.system_message_prompt = (""
+                                      "你是一个很有帮助的助手。当用户提问需要调用工具时，请使用 tools 中定义的函数。 \n"
+                                      "如果工具需要传入invoker变量，传入当前用户，当前用户是:'{}'。\n"
+                                      "当进行工具调用时，仅下列情况对工具返回的信息进行额外分析：\n"
+                                      "1. 用户要求对返回结果进行分析。\n"
+                                      "2. 工具返回的结果不方便阅读。\n"
+                                      "其他情况下，请直接使用工具返回的结果，无需输出额外信息。\n"
+                                      "")
     
     async def process_message(self, user_name, user_id, content, is_group_chat, group_name, chat_id):
         """Process and store a message in the database"""
@@ -40,13 +48,13 @@ class MessageService:
             message_source = f"群聊 {group_name}" if is_group_chat else "私聊"
             logger.info(f"收到{message_source}消息 - 用户: {user_name}, 内容: {content}")
             if content.strip().startswith(settings.FUNCTION_TRIGGER_FLAG):
-                await self._handle_function_call(user_name, content, chat_id, is_group_chat)
+                await self._handle_function_call(user_name, content, chat_id, is_group_chat, user_id)
         except Exception as e:
             self.db.rollback()
             logger.error(f"存储消息时出错: {str(e)}")
 
     
-    async def _handle_function_call(self, user_name, content, chat_id, is_group_chat):
+    async def _handle_function_call(self, user_name, content, chat_id, is_group_chat, user_id):
         """处理flag触发的函数调用请求并发送响应"""
         try:
             logger.info(f"触发flag函数调用 - 用户: {user_name}, 内容: {content}")
@@ -70,12 +78,11 @@ class MessageService:
                         }
                     })
                 messages = [
-                    self.system_message,
+                    {"role": "system", "content": self.system_message_prompt.format(user_id)},
                     {"role": "user", "content": query}
                 ]
                 resp = self.llm_service.chat_completion(messages, tools)
                 msg = resp.choices[0].message
-                response = ""
                 if msg.tool_calls:
                     call = msg.tool_calls[0]
                     fn_name = call.function.name

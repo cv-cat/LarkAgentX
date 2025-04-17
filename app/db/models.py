@@ -37,4 +37,4 @@ class Schedule(Base):
     created_by = Column(String(255), nullable=False, comment="Username from Lark")
 
     def __repr__(self):
-        return f"<Schedule(id={self.id}, module_name='{self.module_name}', function_name='{self.function_name}, arguments='{self.arguments}', created_by={self.created_by})>"
+        return f"<Schedule(id={self.id}, module_name='{self.module_name}', function_name='{self.function_name}', arguments='{self.arguments}', created_by='{self.created_by}', cron='{self.cron}', active={self.active})>"
