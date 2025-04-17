@@ -156,10 +156,10 @@ def send_message(user: str, content: str) -> str:
 
 方法一：单独构建镜像
 ```bash
-# 构建镜像 需要外部mysql 通过docker网关连接宿主机mysql 推荐--env-file
+# 构建镜像 
 docker build -t feishuapp .
 
-# 运行容器
+# 运行容器 需要外部mysql 通过docker网关连接宿主机mysql 推荐--env-file
 docker run -it feishuapp bash
 ```
 
