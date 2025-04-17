@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
 [![Node.js Version](https://img.shields.io/badge/nodejs-18%2B-blue)](https://nodejs.org/zh-cn/)
 
-一个基于飞书(Lark)的全场景MCP Function Call AI Agent，实现大模型通过飞书进行函数调用和消息处理。**无需配置飞书机器人，你的飞书账号即是AI助手。**
+一个基于飞书(Lark)的全场景MCP Function Call AI Agent，实现大模型通过飞书进行函数调用和消息处理。
 
 
 **无需配置飞书机器人，你的飞书账号即是AI助手。**
@@ -156,7 +156,7 @@ def send_message(user: str, content: str) -> str:
 
 方法一：单独构建镜像
 ```bash
-# 构建镜像
+# 构建镜像 需要外部mysql 通过docker网关连接宿主机mysql 推荐--env-file
 docker build -t feishuapp .
 
 # 运行容器
