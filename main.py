@@ -8,6 +8,9 @@ import sys
 import asyncio
 from loguru import logger
 
+from app.core.schedule_service import ScheduleService
+
+
 def start_mcp_server():
     """Start the MCP server in a separate process"""
     logger.info("Starting MCP server...")
@@ -49,7 +52,8 @@ async def main():
         sys.exit(1)
     
     logger.info("创建消息服务...")
-    message_service = MessageService(lark_client)
+    scheduleService = ScheduleService()
+    message_service = MessageService(lark_client, scheduleService)
     
     try:
         logger.info("连接到 Lark WebSocket...")
@@ -63,6 +67,7 @@ async def main():
         sys.exit(1)
     finally:
         message_service.close()
+        scheduleService.close()
         logger.info("消息服务关闭.")
         if mcp_process.is_alive():
             logger.info("Shutting down MCP server...")
