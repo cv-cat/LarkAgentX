@@ -1,8 +1,8 @@
-import json
+from protobuf_to_dict import protobuf_to_dict
 
 import static.proto_pb2 as FLY_BOOK_PROTO
-from protobuf_to_dict import protobuf_to_dict
 from app.utils.lark_utils import generate_request_cid
+
 
 class ProtoBuilder:
     @staticmethod
@@ -138,8 +138,6 @@ class ProtoBuilder:
 
     @staticmethod
     def decode_receive_msg_proto(message):
-        fromId = None
-        ChatId = None
         ReceiveTextContent = {
             'fromId': None,
             'chatId': None,
@@ -183,12 +181,12 @@ class ProtoBuilder:
                             dictionary = dict(sorted(dictionary.items(), key=lambda item: int(item[0])))
                         except:
                             pass
-                        for k, v in dictionary.items():
-                            property = v['property']
+                        for k_, v_ in dictionary.items():
+                            property_ = v_['property']
                             TextProperty = FLY_BOOK_PROTO.TextProperty()
-                            TextProperty.ParseFromString(property)
+                            TextProperty.ParseFromString(property_)
                             TextProperty = protobuf_to_dict(TextProperty)
-                            v['property'] = TextProperty
+                            v_['property'] = TextProperty
                             receive_content += TextProperty['content']
                         ReceiveTextContent['content'] = receive_content
         return Packet_sid, ReceiveTextContent

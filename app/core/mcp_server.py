@@ -24,16 +24,16 @@ llm_service = LLMService()
 
 
 def register_tool(name: str, description: str):
-    def decorator(func):
+    def decorator(func_):
         nonlocal description
-        __func_name__ = func.__name__
+        __func_name__ = func_.__name__
         __module_name__ = __file__.split(f'{BASE_DIR}\\')[-1]
         __module_name__ = __module_name__.split('.')[0]
         __module_name__ = __module_name__.replace('\\', '.')
         description += f"\nmodule_name: {__module_name__}\nfunction_name: {__func_name__}\n"
-        mcp.tool(name=name, description=description)(func)
+        mcp.tool(name=name, description=description)(func_)
         registered_tools.append((name, description))
-        return func
+        return func_
     return decorator
 
 @register_tool(name="add_schedule_job",

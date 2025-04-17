@@ -1,10 +1,11 @@
 """
 Service for Large Language Model operations
 """
-import json
 from loguru import logger
 from openai import OpenAI
+
 from app.config.settings import settings
+
 
 class LLMService:
     """Service for handling LLM API calls"""
