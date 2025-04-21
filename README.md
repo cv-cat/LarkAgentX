@@ -66,16 +66,13 @@ Lark MCP是一个现代化的Python应用程序，能够:
 |-------|------|
 | `tell_joke` | 讲一个随机笑话 |
 | `get_time` | 获取当前时间 |
-| `roll_dice` | 掷一个指定面数的骰子 |
-| `make_todo_list` | 从逗号分隔的任务创建待办清单 |
-| `translate_to_chinese` | 将英文单词翻译成中文 |
-| `countdown` | 创建一个从指定数字开始的倒计时 |
-| `random_color` | 生成一个随机的十六进制颜色代码 |
 | `fortune` | 抽取一个随机运势 |
+| `get_weather` | 获取城市天气 |
 | `count_daily_speakers` | 获取今天发言的人数统计 |
 | `get_top_speaker_today` | 获取今天发言最多的用户 |
 | `send_message` | 给指定用户发送消息 |
 | `list_tools` | 列出所有可用的工具及其描述 |
+| `extra_order_from_content` | 提取文字中的订单信息，包括订单号、商品名称、数量等 |
 
 
 你可以通过在飞书中输入触发指令后跟要执行的操作来调用这些功能，例如: `/run 讲个笑话`
@@ -91,19 +88,24 @@ project/
 │   ├── config/             # 配置模块
 │   │   └── settings.py     # 应用配置
 │   ├── core/               # 核心业务逻辑
-│   │   ├── mcp_server.py   # MCP服务器
+│   │   ├── mcp_server.py   # MCP服务器（函数注册和处理）
+│   │   ├── llm_service.py  # LLM服务
 │   │   └── message_service.py  # 消息处理服务
 │   ├── db/                 # 数据库相关
 │   │   ├── models.py       # 数据模型
 │   │   └── session.py      # 数据库会话管理
 │   └── utils/              # 工具函数
 ├── builder/                # 请求构建器
+├── extension/              # 扩展功能
+│   └── weather_api/        # 天气API集成
 ├── static/                 # 静态资源
 │   ├── resource/           # 图片资源
 │   ├── proto_pb2.py        # 协议定义
 │   └── lark_decrypt.js     # 飞书解密工具
 ├── .env                    # 环境变量
 ├── main.py                 # 应用入口
+├── requirements.txt        # 项目依赖
+├── docker-compose.yml      # Docker Compose配置
 └── Dockerfile              # Docker配置
 ```
 

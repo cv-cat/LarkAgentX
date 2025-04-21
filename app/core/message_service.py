@@ -55,7 +55,7 @@ class MessageService:
             logger.info(f"触发flag函数调用 - 用户: {user_name}, 内容: {content}")
             query = content.strip()[len(settings.FUNCTION_TRIGGER_FLAG):].strip()
             if not self.llm_service.is_available():
-                error_msg = "未在配置中设置 OPENAI_API_KEY"
+                error_msg = settings.AI_BOT_PREFIX + " 未在配置中设置 OPENAI_API_KEY"
                 logger.error(error_msg)
                 self.lark_client.send_msg(error_msg, chat_id)
                 return
@@ -94,10 +94,11 @@ class MessageService:
                     response = summary.choices[0].message.content
                 else:
                     response = msg.content
+                response = f'{settings.AI_BOT_PREFIX} {response}'
                 self.lark_client.send_msg(response, chat_id)
         except Exception as e:
             logger.error(f"处理flag函数调用时出错: {str(e)}")
-            error_msg = f"执行错误: {str(e)}"
+            error_msg = f"{settings.AI_BOT_PREFIX} 处理请求时出错: {str(e)}"
             try:
                 self.lark_client.send_msg(error_msg, chat_id)
             except Exception as send_err:
