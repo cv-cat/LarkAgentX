@@ -175,5 +175,4 @@ def send_message(user: str, content: str) -> str:
     return f"成功向 {user} 发送了私信: '{content}'"
 
 if __name__ == "__main__":
-    print(get_weather("北京"))
     mcp.run(transport="stdio")

@@ -58,16 +58,8 @@ async def main():
     except KeyboardInterrupt:
         logger.info("程序被用户中断.")
     except Exception as e:
-        logger.error(f"连接到 Lark WebSocket 失败: {str(e)}")
-        sys.exit(1)
-    finally:
-        message_service.close()
-        logger.info("消息服务关闭.")
-        if mcp_process.is_alive():
-            logger.info("Shutting down MCP server...")
-            mcp_process.terminate()
-            mcp_process.join()
-            logger.info("MCP server shut down.")
+        logger.error(f"Error: {str(e)}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
