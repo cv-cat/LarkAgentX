@@ -32,7 +32,6 @@ def get_city_weather(city):
             'days': '1'
         }
         response = requests.get(URL, params=params)
-        print(111, response)
         data = response.json()
         current = data['current']
         temperature = current['temperature']
