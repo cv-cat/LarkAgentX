@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/cv-cat-larkagentx-badge.png)](https://mseep.ai/app/cv-cat-larkagentx)
+
 # Lark MCP - 飞书全场景 Function Call AI 助手 🚀
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
