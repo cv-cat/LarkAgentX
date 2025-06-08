@@ -1,4 +1,4 @@
-# Lark MCP - 飞书全场景 Function Call AI 助手 🚀
+# Lark Agentx - 你的飞书 AI 助手 🚀
 
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![Node.js Version](https://img.shields.io/badge/nodejs-18%2B-blue)](https://nodejs.org/zh-cn/)
@@ -14,7 +14,7 @@
 
 ## 项目概述 🌟
 
-Lark MCP是一个现代化的Python应用程序，能够:
+Lark Agentx是一个现代化的Python应用程序，能够:
 
 - 📊 逆向飞书Protobuf格式传输的Websockets和API，监听并记录消息
 - 🤖 提供自定义函数供大模型调用
