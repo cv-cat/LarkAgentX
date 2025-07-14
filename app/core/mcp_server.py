@@ -6,8 +6,7 @@ import datetime
 from loguru import logger
 from sqlalchemy import func, desc
 from mcp.server.fastmcp import FastMCP
-
-
+from typing_extensions import Annotated
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if BASE_DIR not in sys.path:
@@ -39,7 +38,9 @@ def list_tools() -> str:
     return result
 
 @register_tool(name="get_weather", description="获取城市天气")
-def get_weather(city):
+def get_weather(
+    city: Annotated[str, "城市名称"] = "北京"
+):
     """
     获取城市天气
     :param city: 城市名称

@@ -63,13 +63,12 @@ class MessageService:
             async with Client(self.mcp_transport) as mcp_client:
                 tools = []
                 for tool in await mcp_client.list_tools():
-                    info = tool.model_dump() if hasattr(tool, "model_dump") else tool.dict()
                     tools.append({
                         "type": "function",
                         "function": {
-                            "name": info["name"],
-                            "description": info.get("description", ""),
-                            "parameters": info.get("parameters", {})
+                            "name": tool.name,
+                            "description":  tool.description,
+                            "parameters": tool.inputSchema,
                         }
                     })
                 messages = [
