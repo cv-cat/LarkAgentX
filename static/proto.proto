@@ -853,3 +853,76 @@ message UserInfo {
 message GetGroupInfoRequest{
     optional string chatId = 1;
 }
+
+// Message operations - recall, edit, react, pin, mark-read
+message DeleteMessagesRequest {
+    repeated string messageIds = 1;
+    optional string chatId = 2;
+}
+
+message EditMessageRequest {
+    optional string messageId = 1;
+    optional string chatId = 2;
+    optional Type type = 3;
+    optional Content content = 4;
+}
+
+message CreateReactionRequest {
+    optional string messageId = 1;
+    optional string reactionType = 2;
+    optional int32 source = 3;
+}
+
+message DeleteReactionRequest {
+    optional string messageId = 1;
+    optional string reactionType = 2;
+    optional int32 source = 3;
+}
+
+message CreatePinRequest {
+    optional uint64 chatId = 1;
+    optional uint64 messageId = 2;
+}
+
+message CreatePinResponse {
+    optional PinEntity pin = 1;
+}
+
+message PinEntity {
+    optional uint64 id = 1;
+    optional uint64 chatId = 2;
+    optional uint64 messageId = 3;
+}
+
+message DeletePinRequest {
+    optional uint64 pinId = 1;
+    optional uint64 chatId = 2;
+}
+
+message UpdateMessagesMeReadRequest {
+    optional string chatId = 1;
+    optional string messageId = 2;
+    optional uint64 timestamp = 3;
+    reserved 4, 5;
+    optional string requestId = 6;
+}
+
+message PostContent {
+    optional string title = 1;
+    repeated PostParagraph paragraphs = 4;
+    optional RichText richText = 14;
+}
+
+message PostParagraph {
+    repeated PostElement elements = 1;
+}
+
+message PostElement {
+    optional string tag = 1;
+    optional string text = 2;
+    optional string href = 3;
+    optional string user_id = 4;
+    optional string image_key = 5;
+    optional string file_key = 6;
+    optional string emoji_type = 7;
+}
