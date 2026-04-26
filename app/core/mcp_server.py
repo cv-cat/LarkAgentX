@@ -175,5 +175,85 @@ def send_message(user: str, content: str) -> str:
     _ = lark_client.send_msg(content, chatId)
     return f"成功向 {user} 发送了私信: '{content}'"
 
+@register_tool(name="recall_message", description="撤回/删除飞书消息 {chat_id:会话ID message_id:消息ID}")
+def recall_message(chat_id: str, message_id: str) -> str:
+    """撤回一条飞书消息"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.recall_message(chat_id, message_id)
+        return f"成功撤回消息 {message_id}"
+    except Exception as e:
+        return f"撤回消息失败: {str(e)}"
+
+@register_tool(name="edit_message", description="编辑飞书消息内容 {message_id:消息ID new_text:新内容}")
+def edit_message(message_id: str, new_text: str) -> str:
+    """编辑一条已发送的飞书消息"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.edit_message(message_id, new_text)
+        return f"成功编辑消息 {message_id}"
+    except Exception as e:
+        return f"编辑消息失败: {str(e)}"
+
+@register_tool(name="add_reaction", description="给飞书消息添加表情回应 {message_id:消息ID reaction_type:表情类型(如THUMBSUP,HEART,OK,SMILE,赞,❤️,+1等)}")
+def add_reaction(message_id: str, reaction_type: str) -> str:
+    """给一条消息添加表情回应"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.add_reaction(message_id, reaction_type)
+        return f"成功添加表情 {reaction_type} 到消息 {message_id}"
+    except Exception as e:
+        return f"添加表情失败: {str(e)}"
+
+@register_tool(name="remove_reaction", description="移除飞书消息的表情回应 {message_id:消息ID reaction_type:表情类型}")
+def remove_reaction(message_id: str, reaction_type: str) -> str:
+    """移除一条消息的表情回应"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.remove_reaction(message_id, reaction_type)
+        return f"成功移除表情 {reaction_type}"
+    except Exception as e:
+        return f"移除表情失败: {str(e)}"
+
+@register_tool(name="pin_message", description="置顶飞书消息 {chat_id:会话ID message_id:消息ID}")
+def pin_message(chat_id: str, message_id: str) -> str:
+    """置顶一条消息"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.pin_message(chat_id, message_id)
+        return f"成功置顶消息 {message_id}"
+    except Exception as e:
+        return f"置顶消息失败: {str(e)}"
+
+@register_tool(name="unpin_message", description="取消置顶飞书消息 {chat_id:会话ID message_id:消息ID}")
+def unpin_message(chat_id: str, message_id: str) -> str:
+    """取消置顶一条消息"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.unpin_message(chat_id, message_id)
+        return f"成功取消置顶消息 {message_id}"
+    except Exception as e:
+        return f"取消置顶失败: {str(e)}"
+
+@register_tool(name="mark_read", description="标记飞书消息为已读 {chat_id:会话ID message_id:消息ID}")
+def mark_read(chat_id: str, message_id: str) -> str:
+    """标记消息为已读"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.mark_read(chat_id, message_id)
+        return f"成功标记已读到消息 {message_id}"
+    except Exception as e:
+        return f"标记已读失败: {str(e)}"
+
+@register_tool(name="reply_in_thread", description="在飞书话题中回复消息 {chat_id:会话ID root_id:话题根消息ID content:回复内容}")
+def reply_in_thread(chat_id: str, root_id: str, content: str) -> str:
+    """在话题/thread中回复消息"""
+    try:
+        lark_client = LarkClient(get_auth())
+        lark_client.send_msg_in_thread(content, chat_id, root_id)
+        return f"成功在话题 {root_id} 中回复"
+    except Exception as e:
+        return f"话题回复失败: {str(e)}"
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
