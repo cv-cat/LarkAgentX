@@ -272,6 +272,9 @@ docker-compose up -d
 
 如果你对爬虫和 AI Agent 感兴趣，请加作者主页 wx 通过邀请加入群聊
 
-ps: 请加群7，人满或者过期 issue | wx 提醒
+ps: 请加群11、12，人满或者过期 issue | wx 提醒
 
-![group7](https://github.com/cv-cat/Spider_XHS/blob/master/author/group7.jpg)
+![group11](https://github.com/user-attachments/assets/7fdded35-52ca-4bcb-a5b7-935928ed417c)
+
+![group12](https://github.com/user-attachments/assets/8dd858be-5843-4074-a2d5-fc48b3d61856)
+
