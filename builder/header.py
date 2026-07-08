@@ -191,6 +191,40 @@ class HeaderBuilder:
         return header
 
     @staticmethod
+    def build_proto_header(cmd, cmd_version="2.7.0"):
+        """Generic header builder for protobuf API calls"""
+        proto_header = {
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+            "content-type": "application/x-protobuf",
+            "locale": "zh_CN",
+            "origin": "https://open-dev.feishu.cn",
+            "priority": "u=1, i",
+            "referer": "https://open-dev.feishu.cn/",
+            "sec-ch-ua": "\"Microsoft Edge\";v=\"125\", \"Chromium\";v=\"125\", \"Not.A/Brand\";v=\"24\"",
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": "\"Windows\"",
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+            "x-appid": "161471",
+            "x-command": str(cmd),
+            "x-command-version": cmd_version,
+            "x-lgw-os-type": "3",
+            "x-lgw-req-sdk-type": "220",
+            "x-lgw-terminal-type": "2",
+            "x-lsc-bizid": "1",
+            "x-lsc-version": "1",
+            "x-request-id": generate_request_id(),
+            "x-source": "web",
+            "x-web-version": "7.63.0"
+        }
+        header = Header()
+        header.set_header_from_dict(proto_header)
+        return header
+
+    @staticmethod
     def build_get_user_all_name_header():
         search_header = {
             "accept": "*/*",
