@@ -175,5 +175,24 @@ def send_message(user: str, content: str) -> str:
     _ = lark_client.send_msg(content, chatId)
     return f"成功向 {user} 发送了私信: '{content}'"
 
+@register_tool(name="download_image", description="下载并解密飞书图片消息 {image_id:图片ID key_hex:解密密钥(hex) iv_hex:解密IV(hex)}")
+def download_image(image_id: str, key_hex: str, iv_hex: str) -> str:
+    """下载并解密飞书加密图片"""
+    try:
+        from app.api.image_decrypt import download_and_decrypt_image
+        lark_client = LarkClient(get_auth())
+        cookie_str = "; ".join(f"{k}={v}" for k, v in lark_client.auth.cookie.items())
+        result = download_and_decrypt_image(
+            image_id=image_id,
+            key_hex=key_hex,
+            iv_hex=iv_hex,
+            cookie=cookie_str,
+        )
+        if result.get('cached'):
+            return f"图片已缓存: {result['path']} ({result['mime_type']}, {result['size']} bytes)"
+        return f"图片已下载: {result['path']} ({result['mime_type']}, {result['size']} bytes, SHA256: {result['sha256'][:16]}...)"
+    except Exception as e:
+        return f"图片下载失败: {str(e)}"
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
