@@ -155,7 +155,9 @@ class ProtoBuilder:
             'fromId': None,
             'chatId': None,
             'chatType': None,
-            'content': None
+            'content': None,
+            'rawContent': None,
+            'messageType': 'text'
         }
         Frame = FLY_BOOK_PROTO.Frame()
         Frame.ParseFromString(message)
@@ -202,6 +204,11 @@ class ProtoBuilder:
                             v['property'] = TextProperty
                             receive_content += TextProperty['content']
                         ReceiveTextContent['content'] = receive_content
+                    elif message_type == 5:  # IMAGE
+                        # Store raw content for image decryption
+                        ReceiveTextContent['content'] = '[image]'
+                        ReceiveTextContent['rawContent'] = content  # raw bytes for decrypt
+                        ReceiveTextContent['messageType'] = 'image'
         return ReceiveTextContent
 
     @staticmethod

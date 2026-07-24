@@ -23,11 +23,13 @@ class MessageService:
         self.mcp_transport = PythonStdioTransport("app/core/mcp_server.py", env={"PATHEXT": os.environ.get("PATHEXT", "")})
         self.system_message = {"role": "system", "content": "你是一个很有帮助的助手。当用户提问需要调用工具时，请使用 tools 中定义的函数。"}
     
-    async def process_message(self, user_name, user_id, content, is_group_chat, group_name, chat_id):
+    async def process_message(self, user_name, user_id, content, is_group_chat, group_name, chat_id, message_type='text', image_info=None):
         """Process and store a message in the database"""
         try:
             message_source = f"群聊 {group_name}" if is_group_chat else "私聊"
             logger.info(f"收到{message_source}消息 - 用户: {user_name}, 内容: {content}")
+            if image_info:
+                logger.info(f"  Image: {image_info.get('path')} ({image_info.get('mime_type')}, {image_info.get('size')} bytes)")
             if not content or not content.strip():
                 logger.warning("收到非纯文本消息，跳过存储")
                 return

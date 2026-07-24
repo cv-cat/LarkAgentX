@@ -147,13 +147,41 @@ class LarkClient:
         group_name = None
         if is_group_chat:
             group_name = self.get_group_name(chat_id)
+
+        # Handle image messages
+        message_type = msg.get('messageType', 'text')
+        image_info = None
+        if message_type == 'image' and msg.get('rawContent'):
+            try:
+                from app.api.image_decrypt import parse_image_decrypt_info, download_and_decrypt_image
+                decrypt_info = parse_image_decrypt_info(msg['rawContent'])
+                if decrypt_info.get('image_id') and decrypt_info.get('key_hex') and decrypt_info.get('iv_hex'):
+                    # Build cookie string from dict
+                    cookie_str = "; ".join(f"{k}={v}" for k, v in self.auth.cookie.items())
+                    image_info = download_and_decrypt_image(
+                        image_id=decrypt_info['image_id'],
+                        key_hex=decrypt_info['key_hex'],
+                        iv_hex=decrypt_info['iv_hex'],
+                        cookie=cookie_str,
+                    )
+                    content = f"[image] {decrypt_info['image_id']} -> {image_info.get('path', 'unknown')}"
+                else:
+                    content = f"[image] {decrypt_info.get('image_id', 'unknown')}"
+            except Exception as e:
+                logger.warning(f"Image decrypt failed: {e}")
+                content = msg.get('content', '[image]')
+        else:
+            content = msg.get('content', '') if content is None else content
+
         await message_handler(
             user_name=user_name,
             user_id=from_id,
             content=content,
             is_group_chat=is_group_chat,
             group_name=group_name,
-            chat_id=chat_id
+            chat_id=chat_id,
+            message_type=message_type,
+            image_info=image_info,
         )
 
 
