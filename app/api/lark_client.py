@@ -14,6 +14,28 @@ from app.config.settings import settings
 
 
 
+# Command constants
+CMD_DELETE_MESSAGE = 9
+CMD_PUT_REACTION = 25
+CMD_DELETE_REACTION = 26
+CMD_MARK_READ = 40
+CMD_CREATE_PIN = 5100
+CMD_DELETE_PIN = 5103
+CMD_EDIT_MESSAGE = 900010
+
+# Emoji reaction aliases
+EMOJI_ALIASES = {
+    "thumbsup": "THUMBSUP", "赞": "THUMBSUP", "ok": "OK",
+    "heart": "HEART", "❤️": "HEART", "love": "HEART",
+    "laugh": "LAUGH", "笑": "LAUGH", "smile": "SMILE",
+    "sad": "SAD", "cry": "SAD", "shocked": "SHOCKED",
+    "angry": "ANGRY", "fire": "FIRE", "🔥": "FIRE",
+    "clap": "CLAP", "👏": "CLAP", "party": "PARTY",
+    "pray": "FINGERHEART", "cool": "COOL",
+    "jiayi": "JIAYI", "+1": "JIAYI", "加一": "JIAYI",
+}
+
+
 class LarkClient:
     loop = asyncio.new_event_loop()
     """Client for interacting with Lark APIs"""
@@ -91,6 +113,91 @@ class LarkClient:
         group_name = ProtoBuilder.decode_group_info_response_proto(response.content)
         return group_name
 
+    def recall_message(self, chat_id, message_id):
+        """Recall/delete a message (cmd=9)"""
+        headers = HeaderBuilder.build_proto_header(CMD_DELETE_MESSAGE, "1.0.0").get()
+        packet = ProtoBuilder.build_delete_message_request_proto(headers['x-request-id'], message_id, chat_id)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return self._check_response(response)
+
+    def edit_message(self, message_id, new_text):
+        """Edit a text message (cmd=900010)"""
+        headers = HeaderBuilder.build_proto_header(CMD_EDIT_MESSAGE, "7.63.0").get()
+        packet = ProtoBuilder.build_edit_message_request_proto(headers['x-request-id'], message_id, new_text)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return self._check_response(response)
+
+    def add_reaction(self, message_id, reaction_type):
+        """Add emoji reaction to a message (cmd=25)"""
+        reaction_type = EMOJI_ALIASES.get(reaction_type, reaction_type)
+        headers = HeaderBuilder.build_proto_header(CMD_PUT_REACTION, "7.63.0").get()
+        packet = ProtoBuilder.build_reaction_request_proto(headers['x-request-id'], CMD_PUT_REACTION, message_id, reaction_type)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return self._check_response(response)
+
+    def remove_reaction(self, message_id, reaction_type):
+        """Remove emoji reaction from a message (cmd=26)"""
+        reaction_type = EMOJI_ALIASES.get(reaction_type, reaction_type)
+        headers = HeaderBuilder.build_proto_header(CMD_DELETE_REACTION, "7.63.0").get()
+        packet = ProtoBuilder.build_reaction_request_proto(headers['x-request-id'], CMD_DELETE_REACTION, message_id, reaction_type)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return self._check_response(response)
+
+    def pin_message(self, chat_id, message_id):
+        """Pin a message (cmd=5100)"""
+        headers = HeaderBuilder.build_proto_header(CMD_CREATE_PIN, "7.63.0").get()
+        packet = ProtoBuilder.build_pin_request_proto(headers['x-request-id'], chat_id, message_id)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        result = self._check_response(response)
+        # Try to extract pin ID from response for later unpin
+        if response.status_code == 200:
+            pin_id = ProtoBuilder.decode_pin_response_proto(response.content)
+            if pin_id:
+                if not hasattr(self, '_pin_cache'):
+                    self._pin_cache = {}
+                self._pin_cache[str(message_id)] = pin_id
+        return result
+
+    def unpin_message(self, chat_id, message_id):
+        """Unpin a message (cmd=5103)"""
+        pin_id = getattr(self, '_pin_cache', {}).get(str(message_id), message_id)
+        headers = HeaderBuilder.build_proto_header(CMD_DELETE_PIN, "7.63.0").get()
+        packet = ProtoBuilder.build_unpin_request_proto(headers['x-request-id'], chat_id, pin_id)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        result = self._check_response(response)
+        if response.status_code == 200 and hasattr(self, '_pin_cache'):
+            self._pin_cache.pop(str(message_id), None)
+        return result
+
+    def mark_read(self, chat_id, message_id):
+        """Mark messages as read up to given message (cmd=40)"""
+        headers = HeaderBuilder.build_proto_header(CMD_MARK_READ, "7.63.0").get()
+        packet = ProtoBuilder.build_mark_read_request_proto(headers['x-request-id'], chat_id, message_id)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return self._check_response(response)
+
+    def send_msg_in_thread(self, sends_text, chatId, rootId):
+        """Send a message in a thread (cmd=5 with rootId)"""
+        headers = HeaderBuilder.build_proto_header(5, "5.7.0").get()
+        packet = ProtoBuilder.build_send_message_in_thread_request_proto(sends_text, headers['x-request-id'], chatId, rootId)
+        response = requests.post(self.base_url, headers=headers, cookies=self.auth.cookie, data=packet.SerializeToString())
+        return response
+
+    def _check_response(self, response):
+        """Check protobuf response status"""
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            packet = FLY_BOOK_PROTO.Packet()
+            packet.ParseFromString(response.content)
+            if packet.status != 0:
+                raise Exception(f"API error: status={packet.status}")
+            return True
+        except Exception as e:
+            if "status" in str(e):
+                raise
+            return True
+
     async def send_ack(self, ws, packet_sid):
         """Send acknowledgment for received messages"""
         payload = FLY_BOOK_PROTO.Packet()
@@ -142,6 +249,7 @@ class LarkClient:
 
     async def process_msg(self, msg, message_handler):
         from_id, chat_id, chat_type, content = msg['fromId'], msg['chatId'], msg['chatType'], msg['content']
+        message_id = msg.get('messageId')
         user_name = self.get_other_user_all_name(from_id, chat_id)
         is_group_chat = (chat_type == 2)
         group_name = None
@@ -153,7 +261,8 @@ class LarkClient:
             content=content,
             is_group_chat=is_group_chat,
             group_name=group_name,
-            chat_id=chat_id
+            chat_id=chat_id,
+            message_id=message_id
         )
 
 
