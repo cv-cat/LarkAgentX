@@ -12,3 +12,5 @@ websockets==15.0.1
 fastmcp==2.1.2
 Brotli==1.1.0
 cryptography==44.0.2
+# Browser login (optional): pip install playwright && playwright install chromium
+playwright>=1.40.0
