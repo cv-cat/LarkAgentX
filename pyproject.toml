@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "larkx"
+version = "2.0.0"
+description = "飞书网页版消息通道 + 本地 coding agent 接入"
+requires-python = ">=3.9"
+dependencies = [
+    "loguru==0.7.3",
+    "requests==2.31.0",
+    "websockets==15.0.1",
+    "protobuf==5.29.3",
+    "protobuf3-to-dict==0.1.5",
+    "SQLAlchemy==2.0.30",
+    "qrcode[pil]==8.2",
+    "python-dotenv==1.1.0",
+    "questionary==2.1.0",
+]
+
+[project.optional-dependencies]
+mysql = ["PyMySQL==1.1.0"]
+
+[project.scripts]
+lark = "larkx.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["larkx*"]
+
+[tool.setuptools.package-data]
+"larkx.proto" = ["cmd_map.json"]

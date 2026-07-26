@@ -30,3 +30,12 @@ env.bak/
 venv.bak/
 .env
 test.py
+.venv-proto/
+static/resource/worklets/
+
+# 本地资产,不进提交
+tests/
+docs/
+.idea/
+*.egg-info/
+dev/fresh_cookie.txt
