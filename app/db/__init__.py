@@ -1,3 +1,0 @@
-"""
-Database connection and models
-""" 
