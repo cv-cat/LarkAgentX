@@ -1,6 +1,5 @@
 from . import proto_pb2 as P
 from .ids import generate_request_cid
-GATEWAY_URL = 'https://internal-api-lark-api.feishu.cn/im/gateway/'
 
 
 def wrap_packet(cmd: int, payload_msg, request_id: str) -> P.Packet:
@@ -12,7 +11,7 @@ def wrap_packet(cmd: int, payload_msg, request_id: str) -> P.Packet:
     return pkt
 
 
-def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id: str=None) -> P.Packet:
+def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id: str=None, thread_chat: bool=False) -> P.Packet:
     cid_1 = generate_request_cid()
     cid_2 = generate_request_cid()
     req = P.PutMessageRequest()
@@ -23,6 +22,10 @@ def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id:
     req.version = 1
     if root_id:
         req.rootId = str(root_id)
+        req.parentId = str(root_id)
+        # 普通群缺 isReplyInThread 会落进主会话;话题群反而拒收它(replyInThread not support chat)
+        if not thread_chat:
+            req.isReplyInThread = True
     req.content.richText.elementIds.append(cid_2)
     req.content.richText.innerText = text
     req.content.richText.elements.dictionary[cid_2].tag = 1
@@ -39,7 +42,7 @@ def build_create_chat_packet(user_id: str, request_id: str) -> P.Packet:
     return wrap_packet(13, req, request_id)
 
 
-def build_search_packet(query: str, request_id: str) -> P.Packet:
+def build_search_packet(query: str, request_id: str, locale: str='zh_CN') -> P.Packet:
     req = P.UniversalSearchRequest()
     req.header.searchSession = generate_request_cid()
     req.header.sessionSeqId = 1
@@ -62,7 +65,7 @@ def build_search_packet(query: str, request_id: str) -> P.Packet:
     req.header.searchContext.entityItems.append(item4)
     req.header.searchContext.commonFilter.includeOuterTenant = 1
     req.header.searchContext.sourceKey = 'messenger'
-    req.header.searchContext.locale = 'zh_CN'
+    req.header.locale = locale
     req.header.extraParam.CopyFrom(P.SearchExtraParam())
     return wrap_packet(11021, req, request_id)
 
@@ -79,6 +82,14 @@ def build_group_info_packet(chat_id: str, request_id: str) -> P.Packet:
     req = P.GetGroupInfoRequest()
     req.chatId = str(chat_id)
     return wrap_packet(64, req, request_id)
+
+
+def decode_put_message_response(content: bytes) -> str:
+    pkt = P.Packet()
+    pkt.ParseFromString(content)
+    resp = P.PutMessageResponse()
+    resp.ParseFromString(pkt.payload)
+    return resp.message.id
 
 
 def decode_put_chat_response(content: bytes):
@@ -106,7 +117,7 @@ def decode_search_response(content: bytes):
     return results
 
 
-def decode_user_info_response(content: bytes):
+def decode_user_info_response(content: bytes, locale: str='zh_CN'):
     pkt = P.Packet()
     pkt.ParseFromString(content)
     if not pkt.payload:
@@ -115,9 +126,9 @@ def decode_user_info_response(content: bytes):
     info.ParseFromString(pkt.payload)
     detail = info.userInfoDetail.detail
     name = None
-    for locale in detail.locales:
-        if locale.key_string == 'zh_cn':
-            return locale.translation
+    for item in detail.locales:
+        if item.key_string == locale.lower():
+            return item.translation
     if detail.nickname:
         try:
             return detail.nickname.decode('utf-8')

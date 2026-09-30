@@ -8,7 +8,6 @@ from loguru import logger
 from .auth import LarkAuth
 from .proto import builders, decoders, proto_pb2 as P
 from .proto.ids import generate_access_key, generate_long_request_id, generate_request_id
-WS_URL = 'wss://msg-frontier.feishu.cn/ws/v2'
 
 
 class LarkClient:
@@ -20,6 +19,7 @@ class LarkClient:
             self.auth.save()
         self.loop = asyncio.new_event_loop()
         self._loop_started = False
+        self._thread_chats = {}
 
     def build_ws_url(self) -> str:
         device_id = self.auth.device_id
@@ -43,7 +43,7 @@ class LarkClient:
             'access_key': access_key,
             'ticket': ticket,
         }
-        return f'{WS_URL}?{urlencode(params)}'
+        return f'{self.auth.region.ws_url}?{urlencode(params)}'
 
     @staticmethod
     def _wrap_frame(packet: P.Packet) -> bytes:
@@ -118,6 +118,9 @@ class LarkClient:
 
     async def _dispatch(self, msg, on_message):
         try:
+            # 推送里没有会话模式,话题群的根消息要查过 chatMode 才能归到它自己的话题
+            if msg['scope'] == 'chat' and msg.get('chat_type') == 2 and await asyncio.to_thread(self.is_thread_chat, msg['chat_id']):
+                msg['scope'], msg['anchor'] = decoders.resolve_scope(msg['msg_id'], msg['msg_type'], 2, '', '', thread_chat=True)
             await on_message(msg)
         except Exception as e:
             logger.error(f'消息回调异常: {e}')
@@ -126,10 +129,10 @@ class LarkClient:
         headers = {
             'content-type': 'application/x-protobuf',
             'accept': '*/*',
-            'origin': 'https://open-dev.feishu.cn',
-            'referer': 'https://open-dev.feishu.cn/',
+            'origin': self.auth.region.web_origin,
+            'referer': self.auth.region.web_origin + '/',
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
-            'x-appid': '161471',
+            'x-appid': self.auth.gateway_app_id,
             'x-command': str(packet.cmd),
             'x-command-version': '5.7.0',
             'x-lgw-os-type': '1',
@@ -138,21 +141,31 @@ class LarkClient:
             'x-web-version': '3.9.32',
             'x-request-id': generate_long_request_id(),
         }
-        resp = requests.post(builders.GATEWAY_URL, headers=headers, cookies=self.auth.cookies, data=packet.SerializeToString(), timeout=15)
+        resp = requests.post(self.auth.region.gateway_url, headers=headers, cookies=self.auth.cookies, data=packet.SerializeToString(), timeout=15)
         resp.raise_for_status()
         return resp.content
 
-    def send_msg(self, text: str, chat_id: str, root_id: str=None) -> bool:
-        pkt = builders.build_send_message_packet(text, str(chat_id), generate_long_request_id(), root_id=root_id)
+    def send_msg(self, text: str, chat_id: str, root_id: str=None):
+        """返回服务端分配的消息 id;未能确认发送成功(请求失败,或响应里拿不到 id)时返回 None。"""
+        thread_chat = bool(root_id) and self.is_thread_chat(chat_id)
+        pkt = builders.build_send_message_packet(text, str(chat_id), generate_long_request_id(), root_id=root_id, thread_chat=thread_chat)
         try:
-            self._gateway_post(pkt)
-            return True
+            content = self._gateway_post(pkt)
         except Exception as e:
             logger.error(f'发送消息失败: {e}')
-            return False
+            return None
+        try:
+            msg_id = builders.decode_put_message_response(content)
+        except Exception as e:
+            logger.error(f'服务端已接受发送请求,但响应解析失败,无法确认是否发出: {e}')
+            return None
+        if not msg_id:
+            logger.error('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出')
+            return None
+        return msg_id
 
     def search(self, query: str):
-        pkt = builders.build_search_packet(query, generate_long_request_id())
+        pkt = builders.build_search_packet(query, generate_long_request_id(), self.auth.region.locale)
         return builders.decode_search_response(self._gateway_post(pkt))
 
     def create_chat(self, user_id: str):
@@ -162,7 +175,7 @@ class LarkClient:
     def get_user_name(self, user_id: str, chat_id: str):
         try:
             pkt = builders.build_user_info_packet(str(user_id), str(chat_id), generate_long_request_id())
-            return builders.decode_user_info_response(self._gateway_post(pkt))
+            return builders.decode_user_info_response(self._gateway_post(pkt), self.auth.region.locale)
         except Exception:
             return None
 
@@ -206,24 +219,30 @@ class LarkClient:
             return chat
         return None
 
+    def is_thread_chat(self, chat_id: str) -> bool:
+        chat_id = str(chat_id)
+        if chat_id not in self._thread_chats:
+            try:
+                info = self.get_chat_info(chat_id)
+            except Exception as e:
+                logger.debug(f'查询会话模式失败,按普通会话处理: {e}')
+                return False
+            if info is None:
+                return False
+            self._thread_chats[chat_id] = decoders.is_thread_chat(info)
+        return self._thread_chats[chat_id]
+
     def pull_history(self, chat_id: str, positions, save_storage=None):
         resp = self.api('messages.PullMessagesByPositionsRequest', {'chatId': str(chat_id), 'positions': [int(p) for p in positions]})
         messages = (resp or {}).get('messages') or {}
+        thread_chat = self.is_thread_chat(chat_id)
         out = []
         for pos_key, v in sorted(messages.items(), key=lambda kv: int(kv[0])):
             message_type = decoders.enum_to_int(v.get('type', 0))
             chat_type = decoders.enum_to_int(v.get('chatType', 0))
             summary, data = decoders.decode_message_content(message_type, v.get('content', b''))
-            thread_id = v.get('threadId') or ''
             root_id = v.get('rootId') or ''
-            if chat_type == 1:
-                scope, anchor = ('chat', '')
-            elif root_id and root_id != '0':
-                scope, anchor = ('topic', thread_id or root_id)
-            elif chat_type == 3:
-                scope, anchor = ('chat', v.get('id') or '')
-            else:
-                scope, anchor = ('chat', '')
+            scope, anchor = decoders.resolve_scope(v.get('id'), message_type, chat_type, root_id, v.get('threadId') or '', thread_chat)
             msg = {'msg_id': v.get('id'), 'msg_type': message_type, 'msg_type_name': decoders.MSG_TYPE_NAMES.get(message_type, str(message_type)), 'from_id': v.get('fromId'), 'chat_id': v.get('chatId') or v.get('channelId') or str(chat_id), 'chat_type': chat_type, 'chat_type_name': decoders.CHAT_TYPE_NAMES.get(chat_type, str(chat_type)), 'scope': scope, 'anchor': anchor, 'at_me': False, 'root_id': root_id, 'parent_id': v.get('parentId') or '', 'cid': v.get('cid') or '', 'position': v.get('position') or int(pos_key), 'create_time': v.get('createTime'), 'content': summary, 'content_data': data}
             out.append(msg)
             if save_storage is not None:

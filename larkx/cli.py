@@ -7,6 +7,7 @@ from loguru import logger
 from .agent import AgentDispatcher, get_backend
 from .auth import AuthExpired, LarkAuth
 from .client import LarkClient
+from .region import REGIONS, get_region
 from .storage import Storage
 
 
@@ -16,6 +17,8 @@ def _print_json(obj):
 
 def cmd_auth(args):
     auth = LarkAuth()
+    # 新登录的区域: --region > 已有凭证的区域 > LARKX_REGION
+    region = get_region(args.region) if args.region else auth.region
     if args.action == 'status':
         _print_json(auth.status())
         return 0
@@ -28,8 +31,8 @@ def cmd_auth(args):
             logger.info('请粘贴 cookie 串,回车结束:')
             cookie_str = sys.stdin.readline()
         try:
-            msg = auth.import_cookie_string(cookie_str)
-            print(f'导入成功: {msg}')
+            msg = auth.import_cookie_string(cookie_str, region)
+            print(f'导入成功({region.name}): {msg}')
             return 0
         except (ValueError, AuthExpired) as e:
             print(f'导入失败: {e}', file=sys.stderr)
@@ -48,7 +51,6 @@ def cmd_auth(args):
             return 1
         from .auth import QR_STATUS_NAMES, QrLogin
         from .config import DATA_DIR
-        auth = LarkAuth()
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         png_path = DATA_DIR / 'login_qr.png'
 
@@ -57,14 +59,14 @@ def cmd_auth(args):
 
         for attempt in range(1, 7):
             try:
-                ql = QrLogin()
+                ql = QrLogin(region)
             except AuthExpired as e:
                 print(str(e), file=sys.stderr)
                 return 1
             qr = _qrcode.QRCode(border=1)
             qr.add_data(ql.qr_content)
             qr.make_image().save(str(png_path))
-            print(f'[{attempt}/6] 二维码已刷新: {png_path}', flush=True)
+            print(f'[{attempt}/6] 二维码已刷新(请用 {region.label} App 扫码): {png_path}', flush=True)
             if attempt == 1:
                 try:
                     qr.print_ascii(invert=True)
@@ -126,11 +128,11 @@ def _interactive_login():
         return auth
     if not sys.stdin.isatty():
         raise AuthExpired(msg)
-    print(f'凭证缺失或已失效: {msg}', flush=True)
+    print(f'凭证缺失或已失效(区域: {auth.region.name},切换区域用 lark auth qr --region <feishu|lark>): {msg}', flush=True)
     while True:
         choice = _ask_login_choice()
         if choice == 'qr':
-            rc = cmd_auth(argparse.Namespace(action='qr', cookie=None, file=None))
+            rc = cmd_auth(argparse.Namespace(action='qr', cookie=None, file=None, region=None))
             if rc == 0:
                 auth2 = LarkAuth()
                 ok2, _ = auth2.validate()
@@ -152,12 +154,12 @@ def _interactive_login():
 def cmd_send(args):
     client = LarkClient(LarkAuth())
     text = ' '.join(args.text)
-    ok = client.send_msg(text, args.chat_id, root_id=args.root)
-    if ok:
-        from .proto.ids import generate_request_cid
+    msg_id = client.send_msg(text, args.chat_id, root_id=args.root)
+    if msg_id:
         st = Storage()
-        st.save_message({'msg_id': f'local-{int(datetime.now().timestamp() * 1000)}-{generate_request_cid()}', 'chat_id': args.chat_id, 'chat_type': 0, 'scope': 'topic' if args.root else 'chat', 'anchor': args.root or '', 'from_id': client.auth.user_id, 'msg_type': 4, 'msg_type_name': 'TEXT', 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
-        print('已发送')
+        # 用服务端 id 落库,监听收到回显时会补全这条而不是再插一条
+        st.save_message({'msg_id': msg_id, 'chat_id': args.chat_id, 'chat_type': 0, 'scope': 'topic' if args.root else 'chat', 'anchor': args.root or '', 'from_id': client.auth.user_id, 'msg_type': 4, 'msg_type_name': 'TEXT', 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
+        print(f'已发送 msg_id={msg_id}')
         return 0
     print('发送失败', file=sys.stderr)
     return 1
@@ -268,11 +270,12 @@ def cmd_download(args):
     from .media import download, extract_resource_key, message_resource_url
     auth = LarkAuth()
     auth.require_valid()
+    file_host = auth.region.file_host
     if args.key:
         if not args.chat:
             print('--key 需要配合 --chat <chat_id>', file=sys.stderr)
             return 1
-        url = message_resource_url(args.msg_id or '0', args.key, args.chat)
+        url = message_resource_url(args.msg_id or '0', args.key, args.chat, host=file_host)
         msg = None
     else:
         st = Storage()
@@ -294,7 +297,7 @@ def cmd_download(args):
         if not key:
             print(f'消息 {args.msg_id} 类型为 {r.msg_type_name},没有可下载资源', file=sys.stderr)
             return 1
-        url = message_resource_url(r.msg_id, key, r.chat_id)
+        url = message_resource_url(r.msg_id, key, r.chat_id, host=file_host)
     out = args.out
     if not out:
         print('必须指定 -o/--out 保存路径', file=sys.stderr)
@@ -318,7 +321,7 @@ async def _listen(args, auth):
     cfg = load_config()
     t = cfg.get('triggers') or {}
     print('─' * 56, flush=True)
-    print(f"LarkAgentX 启动  user={auth.user_id}  device={auth.device_id[:12]}…", flush=True)
+    print(f"LarkAgentX 启动  region={auth.region.name}  user={auth.user_id}  device={auth.device_id[:12]}…", flush=True)
     print(f"  存储: {cfg['storage_url']}", flush=True)
     print(f"  上下文边界: {cfg['context_scope']}  agent后端: {cfg['agent_backend']}{'  (已启用)' if cfg_agent else '  (未启用,仅入库)'}", flush=True)
     print(f"  触发前缀: {t.get('prefix') or '(全部消息)'}  自定义提示词: {'有' if cfg.get('system_prompt') else '无'}", flush=True)
@@ -327,7 +330,7 @@ async def _listen(args, auth):
     if cfg_agent:
         backend = get_backend()
         async def reply_fn(chat_id, text, root_id=None):
-            await asyncio.to_thread(client.send_msg, text, chat_id, root_id)
+            return await asyncio.to_thread(client.send_msg, text, chat_id, root_id)
         dispatcher = AgentDispatcher(backend, reply_fn)
     name_cache = {}
     async def on_message(msg):
@@ -395,12 +398,13 @@ def main():
             pass
     logger.remove()
     logger.add(sys.stderr, level='INFO')
-    parser = argparse.ArgumentParser(prog='lark', description='飞书网页版消息通道 CLI')
+    parser = argparse.ArgumentParser(prog='lark', description='飞书 / Lark 网页版消息通道 CLI')
     sub = parser.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('auth', help='凭证管理')
     p.add_argument('action', choices=['status', 'import', 'check', 'qr'])
     p.add_argument('--cookie', help='直接传 cookie 串')
     p.add_argument('--file', help='从文件读 cookie')
+    p.add_argument('--region', choices=list(REGIONS), help='qr/import 登录的区域: feishu=飞书(国内版) lark=Lark(国际版);默认沿用已有凭证,无凭证时取 LARKX_REGION')
     p.set_defaults(fn=cmd_auth)
     p = sub.add_parser('send', help='发送文本消息')
     p.add_argument('chat_id')

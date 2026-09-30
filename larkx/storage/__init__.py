@@ -6,6 +6,13 @@ from ..config import load_config
 from .models import AgentSession, Base, Chat, Message
 
 
+def _json_default(o):
+    # 内联缩略图等原始字节对入库无用,转成字符串会撑爆长度上限、截断出非法 JSON
+    if isinstance(o, (bytes, bytearray)):
+        return f'<{len(o)} bytes>'
+    return str(o)
+
+
 class Storage:
     def __init__(self, url: str=None):
         cfg = load_config()
@@ -17,11 +24,17 @@ class Storage:
     def save_message(self, msg: dict, sender_name='', chat_name='', direction='in') -> bool:
         s = self.Session()
         try:
-            exists = s.query(Message).filter_by(msg_id=str(msg['msg_id']), chat_id=str(msg['chat_id'])).first()
-            if exists:
-                return False
-            row = Message(msg_id=str(msg['msg_id']), chat_id=str(msg['chat_id']), chat_name=chat_name or '', chat_type=msg.get('chat_type', 0), scope=msg.get('scope', 'chat'), anchor=msg.get('anchor', '') or '', root_id=msg.get('root_id', '') or '', parent_id=msg.get('parent_id', '') or '', sender_id=str(msg.get('from_id') or ''), sender_name=sender_name or '', msg_type=msg.get('msg_type', 0), msg_type_name=msg.get('msg_type_name', ''), content=msg.get('content', '') or '', content_data=json.dumps(msg.get('content_data'), ensure_ascii=False, default=str)[:20000] if msg.get('content_data') is not None else '', position=msg.get('position') or 0, create_time=msg.get('create_time') or 0, direction=direction)
-            s.add(row)
+            fields = dict(msg_id=str(msg['msg_id']), chat_id=str(msg['chat_id']), chat_name=chat_name or '', chat_type=msg.get('chat_type', 0), scope=msg.get('scope', 'chat'), anchor=msg.get('anchor', '') or '', root_id=msg.get('root_id', '') or '', parent_id=msg.get('parent_id', '') or '', sender_id=str(msg.get('from_id') or ''), sender_name=sender_name or '', msg_type=msg.get('msg_type', 0), msg_type_name=msg.get('msg_type_name', ''), content=msg.get('content', '') or '', content_data=json.dumps(msg.get('content_data'), ensure_ascii=False, default=_json_default)[:20000] if msg.get('content_data') is not None else '', position=msg.get('position') or 0, create_time=msg.get('create_time') or 0, direction=direction)
+            row = s.query(Message).filter_by(msg_id=fields['msg_id'], chat_id=fields['chat_id']).first()
+            if row:
+                # lark send 先落的记录没有 position;WS 回显到达时用回显补全,并视作首次入库
+                if row.position or not fields['position']:
+                    return False
+                for k, v in fields.items():
+                    setattr(row, k, v)
+            else:
+                row = Message(**fields)
+                s.add(row)
             self._touch_chat(s, row)
             s.commit()
             return True

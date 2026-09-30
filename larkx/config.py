@@ -12,6 +12,7 @@ CREDENTIALS_PATH = DATA_DIR / "credentials.json"
 DB_DEFAULT_PATH = DATA_DIR / "messages.db"
 
 DEFAULTS = {
+    "region": "feishu",
     "storage_url": f"sqlite:///{DB_DEFAULT_PATH}",
     "context_scope": "anchor",
     "agent_backend": "claude",
