@@ -2,16 +2,14 @@ import os
 import requests
 from loguru import logger
 from .auth import LarkAuth
-FILE_HOST = 'https://internal-api-lark-file.feishu.cn'
-CDN_HOST = 'https://s1-imfile.feishucdn.com'
+from .config import load_config
+from .region import get_region
 
 
-def message_resource_url(msg_id: str, key: str, chat_id: str, host: str=FILE_HOST) -> str:
+def message_resource_url(msg_id: str, key: str, chat_id: str, host: str=None) -> str:
+    """host 为所属区域的文件主机(LarkAuth.region.file_host),不传时取 LARKX_REGION。"""
+    host = host or get_region(load_config()['region']).file_host
     return f'{host}/download/messages/{msg_id}/keys/{key}?chat_id={chat_id}'
-
-
-def static_resource_url(key: str, host: str=FILE_HOST) -> str:
-    return f'{host}/static-resource/v1/{key}~'
 
 
 def extract_resource_key(msg_type: int, content_data: dict) -> str:
@@ -54,6 +52,6 @@ def download_message_resource(auth: LarkAuth, msg: dict, out_path: str=None):
     key = extract_resource_key(msg.get('msg_type', 0), msg.get('content_data') or {})
     if not key:
         raise ValueError('该消息没有可下载的资源')
-    url = message_resource_url(msg['msg_id'], key, msg['chat_id'])
+    url = message_resource_url(msg['msg_id'], key, msg['chat_id'], host=auth.region.file_host)
     logger.info(f'下载资源: {url}')
     return download(auth, url, out_path)

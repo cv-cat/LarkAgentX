@@ -47,8 +47,12 @@ message PutMessageRequest {
     optional int32 version = 9;
     optional bool isThreadGroupTopic = 10;
     optional bool isAnonymous = 11;
+    optional bool isReplyInThread = 12;
     repeated string leftStaticResourceKeys = 101;
     optional bytes thriftMessage = 102;
+}
+message PutMessageResponse {
+    optional entities.Message message = 1;
 }
 
 
@@ -540,6 +544,10 @@ message TextProperty {
     optional string content = 1;
     optional string i18nKey = 2;
     optional int32 numberOfLines = 3;
+}
+message AtProperty {
+    optional string userId = 1;
+    optional string content = 2;
 }
 message ExtendedEntry {
     optional string key = 1;

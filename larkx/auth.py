@@ -1,13 +1,11 @@
 import json
+import re
 import time
 from pathlib import Path
 import requests
 from loguru import logger
-from .config import CREDENTIALS_PATH, DATA_DIR
-TICKET_URL = 'https://login.feishu.cn/suite/passport/frontier_ticket/'
-USER_INFO_URL = 'https://internal-api-lark-api.feishu.cn/accounts/web/user'
-CSRF_URL = 'https://internal-api-lark-api.feishu.cn/accounts/csrf'
-APPKEY_PAGE_URL = 'https://open-dev.feishu.cn/messenger/'
+from .config import CREDENTIALS_PATH, DATA_DIR, load_config
+from .region import Region, get_region
 
 
 class AuthExpired(Exception):
@@ -17,12 +15,14 @@ class AuthExpired(Exception):
 class LarkAuth:
     def __init__(self, path: Path=CREDENTIALS_PATH):
         self.path = path
+        self.region: Region = get_region(load_config()['region'])
         self.cookies: dict = {}
         self.saved_at: float = 0
         self.device_id: str = ''
         self.app_key: str = ''
         self.user_id: str = ''
         self.csrf_token: str = ''
+        self.web_app_id: str = ''
         self.load()
 
     def load(self) -> bool:
@@ -30,12 +30,15 @@ class LarkAuth:
             return False
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
+            # 引入区域之前保存的凭证都是飞书的
+            self.region = get_region(data.get('region') or 'feishu')
             self.cookies = data.get('cookies', {})
             self.saved_at = data.get('saved_at', 0)
             self.device_id = data.get('device_id', '')
             self.app_key = data.get('app_key', '')
             self.user_id = data.get('user_id', '')
             self.csrf_token = data.get('csrf_token', '')
+            self.web_app_id = data.get('web_app_id', '')
             return bool(self.cookies)
         except Exception as e:
             logger.warning(f'读取凭证文件失败: {e}')
@@ -43,10 +46,28 @@ class LarkAuth:
 
     def save(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({'cookies': self.cookies, 'saved_at': self.saved_at, 'device_id': self.device_id, 'app_key': self.app_key, 'user_id': self.user_id, 'csrf_token': self.csrf_token}, ensure_ascii=False, indent=2), encoding='utf-8')
+        self.path.write_text(json.dumps({'region': self.region.name, 'cookies': self.cookies, 'saved_at': self.saved_at, 'device_id': self.device_id, 'app_key': self.app_key, 'user_id': self.user_id, 'csrf_token': self.csrf_token, 'web_app_id': self.web_app_id}, ensure_ascii=False, indent=2), encoding='utf-8')
         logger.info(f'凭证已保存到 {self.path}')
 
-    def import_cookie_string(self, cookie_str: str):
+    @property
+    def gateway_app_id(self) -> str:
+        return self.web_app_id or self.region.web_app_id
+
+    def adopt_cookies(self, cookies: dict, region: Region) -> tuple:
+        """换上新登录拿到的 cookie;旧账号/旧区域派生出的 app_key 等一并作废后重新抓取。"""
+        self.region = region
+        self.cookies = cookies
+        self.saved_at = time.time()
+        self.device_id = cookies.get('passport_web_did', '')
+        self.csrf_token = cookies.get('swp_csrf_token', '')
+        self.app_key = ''
+        self.web_app_id = ''
+        self.user_id = ''
+        ok, msg = self.validate(fetch_profile=True)
+        self.save()
+        return (ok, msg)
+
+    def import_cookie_string(self, cookie_str: str, region: Region=None):
         cookies = {}
         for part in cookie_str.strip().split(';'):
             if '=' not in part:
@@ -55,13 +76,7 @@ class LarkAuth:
             cookies[k] = v
         if 'session' not in cookies:
             raise ValueError('cookie 中缺少 session,请确认复制完整')
-        self.cookies = cookies
-        self.saved_at = time.time()
-        self.device_id = cookies.get('passport_web_did', '')
-        self.csrf_token = cookies.get('swp_csrf_token', '')
-        self.app_key = ''
-        ok, msg = self.validate(fetch_profile=True)
-        self.save()
+        ok, msg = self.adopt_cookies(cookies, region or self.region)
         if not ok:
             raise AuthExpired(f'导入的 cookie 校验失败: {msg}')
         return msg
@@ -72,7 +87,7 @@ class LarkAuth:
         if not self.device_id:
             self.device_id = self.cookies.get('passport_web_did', '')
         try:
-            r = requests.get(TICKET_URL, params={'local_device_id': self.device_id}, cookies=self.cookies, timeout=10)
+            r = requests.get(self.region.ticket_url, params={'local_device_id': self.device_id}, cookies=self.cookies, timeout=10)
             j = r.json()
             ticket = j.get('ticket')
             if not ticket:
@@ -89,20 +104,24 @@ class LarkAuth:
     def _fetch_profile(self):
         ua = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'}
         try:
-            headers = {**ua, 'x-app-id': '12', 'x-api-version': '1.0.8', 'x-csrf-token': self.csrf_token or self.cookies.get('swp_csrf_token', ''), 'x-device-info': 'platform=websdk', 'x-lgw-os-type': '1', 'x-lgw-terminal-type': '2', 'origin': 'https://open-dev.feishu.cn', 'referer': 'https://open-dev.feishu.cn/'}
-            r = requests.get(USER_INFO_URL, params={'app_id': '12', '_t': int(time.time() * 1000)}, headers=headers, cookies=self.cookies, timeout=10)
+            headers = {**ua, 'x-app-id': '12', 'x-api-version': '1.0.8', 'x-csrf-token': self.csrf_token or self.cookies.get('swp_csrf_token', ''), 'x-device-info': 'platform=websdk', 'x-lgw-os-type': '1', 'x-lgw-terminal-type': '2', 'origin': self.region.web_origin, 'referer': self.region.web_origin + '/'}
+            r = requests.get(self.region.user_info_url, params={'app_id': '12', '_t': int(time.time() * 1000)}, headers=headers, cookies=self.cookies, timeout=10)
             self.user_id = str(r.json()['data']['user']['id'])
         except Exception as e:
             logger.warning(f'获取用户信息失败: {e}')
-        if not self.app_key:
+        if not self.app_key or not self.web_app_id:
             try:
-                import re
-                text = requests.get(APPKEY_PAGE_URL, headers=ua, cookies=self.cookies, timeout=15).text
+                text = requests.get(self.region.messenger_page_url, headers=ua, cookies=self.cookies, timeout=15).text
                 m = re.findall('appKey: "(.*?)"', text)
                 if m:
                     self.app_key = m[0]
                 else:
                     logger.warning('appKey 抓取失败: 页面里没有 appKey(UA/页面结构变化?)')
+                m = re.search(r'teaAppId["\']?\s*:\s*["\']?(\d+)', text)
+                if m:
+                    self.web_app_id = m.group(1)
+                else:
+                    logger.debug(f'页面里没有 teaAppId,x-appid 沿用 {self.region.name} 默认值 {self.region.web_app_id}')
             except Exception as e:
                 logger.warning(f'获取 appKey 失败: {e}')
         if not self.app_key:
@@ -115,7 +134,7 @@ class LarkAuth:
         return msg
 
     def get_ticket(self) -> str:
-        r = requests.get(TICKET_URL, params={'local_device_id': self.device_id}, cookies=self.cookies, timeout=10)
+        r = requests.get(self.region.ticket_url, params={'local_device_id': self.device_id}, cookies=self.cookies, timeout=10)
         j = r.json()
         ticket = j.get('ticket')
         if not ticket:
@@ -123,7 +142,7 @@ class LarkAuth:
         return ticket
 
     def refresh_csrf(self) -> str:
-        r = requests.post(CSRF_URL, params={'_t': int(time.time() * 1000)}, cookies=self.cookies, timeout=10)
+        r = requests.post(self.region.csrf_url, params={'_t': int(time.time() * 1000)}, cookies=self.cookies, timeout=10)
         token = r.cookies.get('swp_csrf_token')
         if token:
             self.csrf_token = token
@@ -131,15 +150,13 @@ class LarkAuth:
         return self.csrf_token
 
     def status(self) -> dict:
-        return {'has_credentials': bool(self.cookies), 'saved_at': self.saved_at, 'device_id': self.device_id, 'user_id': self.user_id, 'app_key': self.app_key, 'path': str(self.path)}
+        return {'region': self.region.name, 'has_credentials': bool(self.cookies), 'saved_at': self.saved_at, 'device_id': self.device_id, 'user_id': self.user_id, 'app_key': self.app_key, 'web_app_id': self.gateway_app_id, 'path': str(self.path)}
 
 
-QR_INIT_URL = "https://accounts.feishu.cn/accounts/qrlogin/init"
-QR_POLLING_URL = "https://accounts.feishu.cn/accounts/qrlogin/polling"
 QR_STATUS_NAMES = {0: "SUCCESS", 1: "等待扫码", 2: "已扫码待确认", 3: "已取消", 4: "错误", 5: "已过期"}
 
 
-def _qr_session() -> requests.Session:
+def _qr_session(region: Region) -> requests.Session:
     s = requests.Session()
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
@@ -148,16 +165,17 @@ def _qr_session() -> requests.Session:
         "X-Api-Version": "1.0.8",
         "X-Device-Info": "platform=websdk",
         "X-Terminal-Type": "2",
-        "Origin": "https://accounts.feishu.cn",
-        "Referer": "https://accounts.feishu.cn/accounts/page/login?app_id=1",
+        "Origin": region.accounts_origin,
+        "Referer": f"{region.accounts_origin}/accounts/page/login?app_id=1",
     })
     return s
 
 
 class QrLogin:
-    def __init__(self, redirect_uri="https://open-dev.feishu.cn/next/messenger"):
-        self.session = _qr_session()
-        r = self.session.post(QR_INIT_URL, json={"redirect_uri": redirect_uri}, timeout=15)
+    def __init__(self, region: Region=None):
+        self.region = region or get_region(load_config()['region'])
+        self.session = _qr_session(self.region)
+        r = self.session.post(f"{self.region.accounts_origin}/accounts/qrlogin/init", json={"redirect_uri": self.region.qr_redirect_uri}, timeout=15)
         j = r.json()
         if j.get("code") != 0:
             raise AuthExpired(f"qr init 失败: {j}")
@@ -170,7 +188,7 @@ class QrLogin:
         deadline = time.time() + timeout
         last = None
         while time.time() < deadline:
-            r = self.session.post(QR_POLLING_URL, json={}, timeout=15)
+            r = self.session.post(f"{self.region.accounts_origin}/accounts/qrlogin/polling", json={}, timeout=15)
             j = r.json()
             data = j.get("data") or {}
             step = data.get("next_step")
@@ -191,12 +209,7 @@ class QrLogin:
             cookies[c.name] = c.value
         if "session" not in cookies:
             raise AuthExpired("登录流程结束但未拿到 session cookie")
-        auth.cookies = cookies
-        auth.saved_at = time.time()
-        auth.device_id = cookies.get("passport_web_did", "")
-        auth.csrf_token = cookies.get("swp_csrf_token", "")
-        ok, msg = auth.validate(fetch_profile=True)
-        auth.save()
+        ok, msg = auth.adopt_cookies(cookies, self.region)
         if not ok:
             raise AuthExpired(f"登录成功但凭证校验失败: {msg}")
         return msg

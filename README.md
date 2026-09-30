@@ -12,7 +12,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 
-一个基于飞书(Lark)的 AI Agent，通过逆向飞书网页版内部协议，让你的飞书账号直连本地 coding agent。
+一个基于飞书(Lark)的 AI Agent，通过逆向飞书网页版内部协议，让你的飞书账号直连本地 coding agent。同时支持飞书(国内版)与 Lark(国际版)。
 
 **无需配置飞书机器人，你的飞书账号即是 AI 助手。**
 
@@ -57,7 +57,7 @@ Lark Agentx 是一个现代化的 Python 应用程序，能够:
 
 | 命令 | 描述 |
 |-------|------|
-| `lark auth qr` | 扫码登录(推荐) |
+| `lark auth qr` | 扫码登录(推荐;`--region lark` 登录 Lark 国际版) |
 | `lark auth import` | 粘贴 cookie 登录 |
 | `lark auth check` | 校验凭证是否过期 |
 | `lark send <chat_id> <text>` | 发送文本消息(`--root` 回复进话题) |
@@ -131,6 +131,7 @@ pip install -e .
 复制 `.env.example` 为 `.env`(全部有默认值,按需修改):
 
 ```bash
+LARKX_REGION=feishu                                    # feishu(飞书国内版) | lark(Lark 国际版),见下文「Lark 国际版」
 LARKX_HOME=~/.larkx                                    # 数据目录
 LARKX_STORAGE_URL=                                     # 留空=SQLite(LARKX_HOME/messages.db);MySQL 填 mysql+pymysql://<user>:<password>@<host>:3306/<db>
 LARKX_CONTEXT_SCOPE=anchor                             # agent 上下文边界: anchor(会话+话题) | chat(会话) | global(全部共享)
@@ -155,7 +156,21 @@ python main.py                                   # 等价于 lark listen --agent
 # 凭证缺失/失效时会弹出交互菜单(扫码/粘贴 cookie),不用手动处理
 ```
 
-启动时首行打印生效配置(账号/存储/上下文边界/agent 后端/触发前缀/提示词),配置不对一眼可见。
+启动时首行打印生效配置(区域/账号/存储/上下文边界/agent 后端/触发前缀/提示词),配置不对一眼可见。
+
+## 🌏 Lark 国际版
+
+Lark 与飞书共用同一套 web 客户端和协议,区别只在域名(`larksuite.com` vs `feishu.cn`)、web 端 appId 和默认语言,端点表见 `larkx/region.py`。
+
+```bash
+lark auth qr --region lark                       # 用 Lark App 扫码
+lark auth import --region lark --cookie "<从 larksuite.com 页面复制的 cookie>"
+python main.py                                   # 之后所有命令自动走凭证里记录的区域
+```
+
+- 区域随凭证保存在 `credentials.json` 的 `region` 字段;旧版本保存的凭证视为飞书
+- `LARKX_REGION` 只影响「还没有凭证」时的首次登录;已登录后切换区域需显式 `--region`
+- 网关请求头 `x-appid` 登录时从 messenger 页面的 `teaAppId` 抓取,抓不到时回退到 `region.py` 里的默认值,`lark auth status` 可查看
 
 ## 🤖 数字人工作方式
 
