@@ -4,9 +4,10 @@ import json
 import sys
 from datetime import datetime
 from loguru import logger
-from .agent import AgentDispatcher, get_backend
+from . import accounts
 from .auth import AuthExpired, LarkAuth
 from .client import LarkClient
+from .listener import Listener, ListenerError
 from .region import REGIONS, get_region
 from .storage import Storage
 
@@ -16,7 +17,7 @@ def _print_json(obj):
 
 
 def cmd_auth(args):
-    auth = LarkAuth()
+    auth = LarkAuth(getattr(args, 'account', None))
     # 新登录的区域: --region > 已有凭证的区域 > LARKX_REGION
     region = get_region(args.region) if args.region else auth.region
     if args.action == 'status':
@@ -50,9 +51,9 @@ def cmd_auth(args):
             print('需要 qrcode 包: pip install qrcode', file=sys.stderr)
             return 1
         from .auth import QR_STATUS_NAMES, QrLogin
-        from .config import DATA_DIR
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        png_path = DATA_DIR / 'login_qr.png'
+        home = accounts.home_of(getattr(args, 'account', None))
+        home.mkdir(parents=True, exist_ok=True)
+        png_path = home / 'login_qr.png'
 
         def on_status(status, step):
             print(f'状态: {QR_STATUS_NAMES.get(status, status)} ({step})', flush=True)
@@ -120,8 +121,8 @@ def _ask_cookie():
     return input('粘贴完整 cookie 后回车: ').strip()
 
 
-def _interactive_login():
-    auth = LarkAuth()
+def _interactive_login(account_id=None):
+    auth = LarkAuth(account_id)
     ok, msg = auth.validate(fetch_profile=True)
     if ok:
         auth.save()
@@ -132,9 +133,9 @@ def _interactive_login():
     while True:
         choice = _ask_login_choice()
         if choice == 'qr':
-            rc = cmd_auth(argparse.Namespace(action='qr', cookie=None, file=None, region=None))
+            rc = cmd_auth(argparse.Namespace(action='qr', cookie=None, file=None, region=None, account=account_id))
             if rc == 0:
-                auth2 = LarkAuth()
+                auth2 = LarkAuth(account_id)
                 ok2, _ = auth2.validate()
                 if ok2:
                     return auth2
@@ -152,13 +153,11 @@ def _interactive_login():
 
 
 def cmd_send(args):
-    client = LarkClient(LarkAuth())
+    client = LarkClient(LarkAuth(args.account))
     text = ' '.join(args.text)
-    msg_id = client.send_msg(text, args.chat_id, root_id=args.root)
+    msg_id = client.send_msg(text, args.chat_id, root_id=args.root, quote_id=args.quote)
     if msg_id:
-        st = Storage()
-        # 用服务端 id 落库,监听收到回显时会补全这条而不是再插一条
-        st.save_message({'msg_id': msg_id, 'chat_id': args.chat_id, 'chat_type': 0, 'scope': 'topic' if args.root else 'chat', 'anchor': args.root or '', 'from_id': client.auth.user_id, 'msg_type': 4, 'msg_type_name': 'TEXT', 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
+        Storage(account_id=args.account).save_sent(msg_id, args.chat_id, text, client.auth.user_id, root_id=args.root)
         print(f'已发送 msg_id={msg_id}')
         return 0
     print('发送失败', file=sys.stderr)
@@ -166,14 +165,13 @@ def cmd_send(args):
 
 
 def cmd_config(args):
-    from .config import load_config
-    cfg = load_config()
+    cfg = accounts.get_settings(args.account)
     _print_json(cfg)
     return 0
 
 
 def cmd_chats(args):
-    st = Storage()
+    st = Storage(account_id=args.account)
     rows = st.list_chats(limit=args.limit)
     for c in rows:
         type_name = {1: '私聊', 2: '群聊', 3: '话题群'}.get(c.chat_type, '?')
@@ -182,7 +180,7 @@ def cmd_chats(args):
 
 
 def cmd_sessions(args):
-    st = Storage()
+    st = Storage(account_id=args.account)
     rows = st.list_sessions(limit=args.limit)
     for r in rows:
         scope = '话题' if r.anchor else ('全局' if r.session_key == 'global' else '会话')
@@ -192,7 +190,7 @@ def cmd_sessions(args):
 
 
 def cmd_messages(args):
-    st = Storage()
+    st = Storage(account_id=args.account)
     anchor = None
     if args.anchor is not None:
         anchor = args.anchor
@@ -210,14 +208,14 @@ def cmd_messages(args):
 
 
 def cmd_search(args):
-    client = LarkClient(LarkAuth())
+    client = LarkClient(LarkAuth(args.account))
     results = client.search(' '.join(args.query))
     _print_json(results)
     return 0
 
 
 def cmd_api(args):
-    client = LarkClient(LarkAuth())
+    client = LarkClient(LarkAuth(args.account))
     data = None
     if args.json_body:
         try:
@@ -235,7 +233,7 @@ def cmd_api(args):
 
 
 def cmd_history(args):
-    client = LarkClient(LarkAuth())
+    client = LarkClient(LarkAuth(args.account))
     chat_id = args.chat_id
     if args.start is not None:
         start = args.start
@@ -246,10 +244,10 @@ def cmd_history(args):
             return 1
         start = int(info['lastMessagePosition']) - args.count + 1
         if info.get('name'):
-            st = Storage()
+            st = Storage(account_id=args.account)
             st.update_chat_name(chat_id, info['name'], info.get('type', 0) if isinstance(info.get('type'), int) else 0)
     positions = list(range(max(1, start), max(1, start) + args.count))
-    st = Storage() if args.save else None
+    st = Storage(account_id=args.account) if args.save else None
     msgs = client.pull_history(chat_id, positions, save_storage=st)
     for m in msgs:
         if args.json:
@@ -268,7 +266,7 @@ def cmd_history(args):
 
 def cmd_download(args):
     from .media import download, extract_resource_key, message_resource_url
-    auth = LarkAuth()
+    auth = LarkAuth(args.account)
     auth.require_valid()
     file_host = auth.region.file_host
     if args.key:
@@ -278,7 +276,7 @@ def cmd_download(args):
         url = message_resource_url(args.msg_id or '0', args.key, args.chat, host=file_host)
         msg = None
     else:
-        st = Storage()
+        st = Storage(account_id=args.account)
         rows = None
         if args.chat:
             rows = st.get_messages(args.chat, limit=500)
@@ -307,79 +305,31 @@ def cmd_download(args):
     return 0
 
 
-async def _listen(args, auth):
-    client = LarkClient(auth)
-    st = Storage()
-    cfg_agent = args.agent
-    if cfg_agent and (not auth.user_id):
-        auth._fetch_profile()
-        auth.save()
-    if cfg_agent and (not auth.user_id):
-        print('无法确定当前账号 user_id,--agent 存在自回环风险,已拒绝启动。请先 lark auth check 确认凭证有效。', file=sys.stderr)
-        raise SystemExit(1)
-    from .config import load_config
-    cfg = load_config()
+def _print_banner(args, auth, cfg):
     t = cfg.get('triggers') or {}
+    st = Storage(account_id=args.account)
     print('─' * 56, flush=True)
-    print(f"LarkAgentX 启动  region={auth.region.name}  user={auth.user_id}  device={auth.device_id[:12]}…", flush=True)
-    print(f"  存储: {cfg['storage_url']}", flush=True)
-    print(f"  上下文边界: {cfg['context_scope']}  agent后端: {cfg['agent_backend']}{'  (已启用)' if cfg_agent else '  (未启用,仅入库)'}", flush=True)
+    print(f"LarkAgentX 启动  account={auth.account_id}  region={auth.region.name}  user={auth.user_id}  device={auth.device_id[:12]}…", flush=True)
+    print(f"  存储: {st.url}", flush=True)
+    st.close()
+    backend = cfg['agent_backend']
+    print(f"  上下文边界: {cfg['context_scope']}  agent后端: {backend}{'  (已启用)' if args.agent else '  (未启用,仅入库)'}", flush=True)
     print(f"  触发前缀: {t.get('prefix') or '(全部消息)'}  自定义提示词: {'有' if cfg.get('system_prompt') else '无'}", flush=True)
     print('─' * 56, flush=True)
-    dispatcher = None
-    if cfg_agent:
-        backend = get_backend()
-        async def reply_fn(chat_id, text, root_id=None):
-            return await asyncio.to_thread(client.send_msg, text, chat_id, root_id)
-        dispatcher = AgentDispatcher(backend, reply_fn)
-    name_cache = {}
-    async def on_message(msg):
-        chat_id = msg['chat_id']
-        chat_type = msg.get('chat_type', 0)
-        is_own = str(msg['from_id']) == str(auth.user_id)
-        sender_key = (msg['from_id'], chat_id)
-        if sender_key not in name_cache:
-            name_cache[sender_key] = await asyncio.to_thread(client.get_user_name, msg['from_id'], chat_id)
-        sender_name = name_cache.get(sender_key) or ''
-        if chat_id not in name_cache:
-            if chat_type in (2, 3):
-                name_cache[chat_id] = await asyncio.to_thread(client.get_group_name, chat_id)
-                if name_cache[chat_id]:
-                    st.update_chat_name(chat_id, name_cache[chat_id], chat_type)
-            elif chat_type == 1 and not is_own and sender_name:
-                name_cache[chat_id] = sender_name
-                st.update_chat_name(chat_id, sender_name, chat_type)
-        chat_name = name_cache.get(chat_id) or ''
-        saved = st.save_message(msg, sender_name=sender_name, chat_name=chat_name,
-                                direction='out' if is_own else 'in')
-        if saved:
-            where = chat_name or chat_id
-            content = msg['content'] or ''
-            shown = content[:80] + ('…' if len(content) > 80 else '')
-            line = f"[{where}] {sender_name or msg['from_id']}: {shown}"
-            if is_own and sys.stderr.isatty():
-                line = f'[36m{line}[0m'
-            logger.info(line)
-            if cfg.get('mark_read') and not is_own and msg.get('position'):
-                await asyncio.to_thread(client.mark_read, chat_id, msg['position'], [msg['msg_id']])
-            if dispatcher:
-                await dispatcher.submit(msg, chat_name=chat_name, sender_name=sender_name, my_user_id=auth.user_id)
-    while True:
-        try:
-            await client.connect_websocket(on_message)
-        except AuthExpired:
-            raise
-        except Exception as e:
-            logger.warning(f'WS 断开,10s 后重连: {e}')
-            await asyncio.sleep(10)
 
 
 def cmd_listen(args):
     try:
         while True:
             try:
-                auth = _interactive_login()
-                return asyncio.run(_listen(args, auth))
+                auth = _interactive_login(args.account)
+                cfg = accounts.get_settings(args.account)
+                _print_banner(args, auth, cfg)
+                listener = Listener(args.account, agent=args.agent, cfg=cfg)
+                return asyncio.run(listener.run(auth))
+            except ListenerError as e:
+                print(str(e), file=sys.stderr)
+                return 1
             except AuthExpired as e:
                 if not sys.stdin.isatty():
                     print(str(e), file=sys.stderr)
@@ -388,6 +338,25 @@ def cmd_listen(args):
     except KeyboardInterrupt:
         print('\n已停止')
         return 0
+
+
+def cmd_web(args):
+    try:
+        import uvicorn
+        from .web import create_app
+    except ImportError as e:
+        print(f'缺少 web 依赖,请执行: pip install -e .  ({e})', file=sys.stderr)
+        return 1
+    from .web.app import resolve_token, is_loopback
+    token = resolve_token(args.token)
+    if not is_loopback(args.host) and not token:
+        print(f'监听 {args.host} 会把控制台暴露给局域网/公网,必须设 --token 或 LARKX_WEB_TOKEN', file=sys.stderr)
+        return 1
+    app = create_app(token=token, autostart=not args.no_autostart)
+    url = f'http://{args.host}:{args.port}'
+    print(f'LarkAgentX: {url}' + (f'/?token={token}' if token else '') + f'  (控制台 {url}/console)', flush=True)
+    uvicorn.run(app, host=args.host, port=args.port, log_level='warning')
+    return 0
 
 
 def main():
@@ -400,54 +369,63 @@ def main():
     logger.add(sys.stderr, level='INFO')
     parser = argparse.ArgumentParser(prog='lark', description='飞书 / Lark 网页版消息通道 CLI')
     sub = parser.add_subparsers(dest='cmd', required=True)
-    p = sub.add_parser('auth', help='凭证管理')
+    acct = argparse.ArgumentParser(add_help=False)
+    acct.add_argument('--account', default=None, metavar='ID', help='账号 id(默认 default;账号在 lark web 里管理)')
+    p = sub.add_parser('auth', parents=[acct], help='凭证管理')
     p.add_argument('action', choices=['status', 'import', 'check', 'qr'])
     p.add_argument('--cookie', help='直接传 cookie 串')
     p.add_argument('--file', help='从文件读 cookie')
     p.add_argument('--region', choices=list(REGIONS), help='qr/import 登录的区域: feishu=飞书(国内版) lark=Lark(国际版);默认沿用已有凭证,无凭证时取 LARKX_REGION')
     p.set_defaults(fn=cmd_auth)
-    p = sub.add_parser('send', help='发送文本消息')
+    p = sub.add_parser('send', parents=[acct], help='发送文本消息')
     p.add_argument('chat_id')
     p.add_argument('text', nargs='+')
     p.add_argument('--root', help='话题/线程根消息 id,回复进话题')
+    p.add_argument('--quote', help='引用回复这条消息(留在主会话流)')
     p.set_defaults(fn=cmd_send)
-    p = sub.add_parser('config', help='查看生效中的配置(配置项写在 .env 里)')
+    p = sub.add_parser('config', parents=[acct], help='查看生效中的配置(配置项写在 .env 里)')
     p.set_defaults(fn=cmd_config)
-    p = sub.add_parser('chats', help='列出本地会话')
+    p = sub.add_parser('chats', parents=[acct], help='列出本地会话')
     p.add_argument('--limit', type=int, default=50)
     p.set_defaults(fn=cmd_chats)
-    p = sub.add_parser('sessions', help='列出 agent 会话(session 表)')
+    p = sub.add_parser('sessions', parents=[acct], help='列出 agent 会话(session 表)')
     p.add_argument('--limit', type=int, default=50)
     p.set_defaults(fn=cmd_sessions)
-    p = sub.add_parser('messages', help='读本地消息记录')
+    p = sub.add_parser('messages', parents=[acct], help='读本地消息记录')
     p.add_argument('chat_id')
     p.add_argument('--anchor', default=None, help='话题 id;空字符串=仅主会话流')
     p.add_argument('--limit', type=int, default=50)
     p.add_argument('--json', action='store_true')
     p.set_defaults(fn=cmd_messages)
-    p = sub.add_parser('search', help='搜索用户/群')
+    p = sub.add_parser('search', parents=[acct], help='搜索用户/群')
     p.add_argument('query', nargs='+')
     p.set_defaults(fn=cmd_search)
-    p = sub.add_parser('api', help='调任意网关接口(类型名见 docs/cmd_table.md)')
+    p = sub.add_parser('api', parents=[acct], help='调任意网关接口(类型名见 docs/cmd_table.md)')
     p.add_argument('type', help='proto 请求类型名(如 chats.PullChatsByIdsRequest)或 cmd 数字')
     p.add_argument('json_body', nargs='?', help='请求字段 JSON')
     p.set_defaults(fn=cmd_api)
-    p = sub.add_parser('history', help='拉取会话历史消息')
+    p = sub.add_parser('history', parents=[acct], help='拉取会话历史消息')
     p.add_argument('chat_id')
     p.add_argument('--start', type=int, help='起始 position(默认从最新往前)')
     p.add_argument('--count', type=int, default=20)
     p.add_argument('--save', action='store_true', help='同时写入本地库')
     p.add_argument('--json', action='store_true')
     p.set_defaults(fn=cmd_history)
-    p = sub.add_parser('download', help='下载消息里的图片/文件等资源')
+    p = sub.add_parser('download', parents=[acct], help='下载消息里的图片/文件等资源')
     p.add_argument('msg_id', nargs='?', help='消息 id(从本地库查资源 key)')
     p.add_argument('--key', help='直接指定资源 key(img_v3_*/file_v3_*),需配合 --chat')
     p.add_argument('--chat', help='chat_id(配合 --key 或加速本地查找)')
     p.add_argument('-o', '--out', required=True, help='保存路径')
     p.set_defaults(fn=cmd_download)
-    p = sub.add_parser('listen', help='常驻接收消息')
+    p = sub.add_parser('listen', parents=[acct], help='常驻接收消息')
     p.add_argument('--agent', action='store_true', help='接本地 coding agent 自动回复')
     p.set_defaults(fn=cmd_listen)
+    p = sub.add_parser('web', help='启动 web 控制台(多账号管理/设置/日志)')
+    p.add_argument('--host', default='127.0.0.1', help='监听地址,默认仅本机;非本机地址必须配 --token')
+    p.add_argument('--port', type=int, default=8765)
+    p.add_argument('--token', default=None, help='访问令牌(也可用 LARKX_WEB_TOKEN)')
+    p.add_argument('--no-autostart', action='store_true', help='不自动启动设置了「自启」的账号')
+    p.set_defaults(fn=cmd_web)
     args = parser.parse_args()
     sys.exit(args.fn(args))
 

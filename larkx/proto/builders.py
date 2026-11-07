@@ -11,7 +11,7 @@ def wrap_packet(cmd: int, payload_msg, request_id: str) -> P.Packet:
     return pkt
 
 
-def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id: str=None, thread_chat: bool=False) -> P.Packet:
+def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id: str=None, thread_chat: bool=False, quote: bool=False) -> P.Packet:
     cid_1 = generate_request_cid()
     cid_2 = generate_request_cid()
     req = P.PutMessageRequest()
@@ -24,7 +24,8 @@ def build_send_message_packet(text: str, chat_id: str, request_id: str, root_id:
         req.rootId = str(root_id)
         req.parentId = str(root_id)
         # 普通群缺 isReplyInThread 会落进主会话;话题群反而拒收它(replyInThread not support chat)
-        if not thread_chat:
+        # quote: 引用回复,故意不带它,留在主会话流
+        if not thread_chat and not quote:
             req.isReplyInThread = True
     req.content.richText.elementIds.append(cid_2)
     req.content.richText.innerText = text

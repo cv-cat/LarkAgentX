@@ -32,6 +32,13 @@ def is_thread_chat(chat_info: dict) -> bool:
     return enum_to_int(chat_info.get('chatMode', 0)) in THREAD_CHAT_MODES or enum_to_int(chat_info.get('type', 0)) == 3
 
 
+def is_self_chat(chat_info: dict) -> bool:
+    """和自己的会话: 私聊类型且成员只有一个人。proto 里没有专门的标记字段。"""
+    if enum_to_int(chat_info.get('type', 0)) != 1:
+        return False
+    return chat_info.get('userCount') == 1 or chat_info.get('memberCount') == 1
+
+
 def resolve_scope(msg_id: str, msg_type: int, chat_type: int, root_id: str, thread_id: str, thread_chat: bool=False) -> tuple:
     """返回 (scope, anchor):anchor 是回复时的 --root,也是 agent 的会话边界。"""
     if chat_type == 1:

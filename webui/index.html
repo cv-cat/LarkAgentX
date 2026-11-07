@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LarkAgentX · 飞书账号直连本地 Coding Agent</title>
+    <meta name="description" content="扫码登录飞书或 Lark，将收到的消息交给本机的 Claude Code 或 Codex 处理。无需配置飞书机器人。" />
+    <link rel="icon" type="image/svg+xml" href="/mark.svg" />
+    <script>
+      // 首屏前定主题,避免闪一下。默认浅色,深色可选。
+      ;(function () {
+        var t = localStorage.getItem('larkx_theme')
+        document.documentElement.className = t === 'dark' ? 'dark' : 'light'
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -13,6 +13,7 @@ from .proto.ids import generate_access_key, generate_long_request_id, generate_r
 class LarkClient:
     def __init__(self, auth: LarkAuth):
         self.auth = auth
+        self.log = logger.bind(account=auth.account_id)
         self.auth.require_valid()
         if not self.auth.app_key or not self.auth.user_id:
             self.auth.validate(fetch_profile=True)
@@ -20,6 +21,7 @@ class LarkClient:
         self.loop = asyncio.new_event_loop()
         self._loop_started = False
         self._thread_chats = {}
+        self._self_chats = {}
 
     def build_ws_url(self) -> str:
         device_id = self.auth.device_id
@@ -81,7 +83,7 @@ class LarkClient:
                 await asyncio.sleep(interval)
                 await self.send_heartbeat(ws)
         except Exception as e:
-            logger.warning(f'心跳停止: {e}')
+            self.log.warning(f'心跳停止: {e}')
 
     def _ensure_loop(self):
         if not self._loop_started:
@@ -91,11 +93,20 @@ class LarkClient:
             threading.Thread(target=run_loop, args=(self.loop,), daemon=True).start()
             self._loop_started = True
 
-    async def connect_websocket(self, on_message):
+    def close(self):
+        if self._loop_started:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+            self._loop_started = False
+        elif not self.loop.is_closed():
+            self.loop.close()
+
+    async def connect_websocket(self, on_message, on_connected=None):
         self._ensure_loop()
         url = self.build_ws_url()
         async with websockets.connect(url) as ws:
-            logger.info('WS 已连接')
+            self.log.info('WS 已连接')
+            if on_connected:
+                on_connected()
             heartbeat_task = asyncio.create_task(self.heartbeat_loop(ws))
             try:
                 async for raw in ws:
@@ -111,7 +122,7 @@ class LarkClient:
                                 continue
                             asyncio.run_coroutine_threadsafe(self._dispatch(msg, on_message), self.loop)
                     except Exception as e:
-                        logger.debug(f'跳过异常帧: {e}')
+                        self.log.debug(f'跳过异常帧: {e}')
                         continue
             finally:
                 heartbeat_task.cancel()
@@ -123,7 +134,7 @@ class LarkClient:
                 msg['scope'], msg['anchor'] = decoders.resolve_scope(msg['msg_id'], msg['msg_type'], 2, '', '', thread_chat=True)
             await on_message(msg)
         except Exception as e:
-            logger.error(f'消息回调异常: {e}')
+            self.log.error(f'消息回调异常: {e}')
 
     def _gateway_post(self, packet: P.Packet) -> bytes:
         headers = {
@@ -145,22 +156,22 @@ class LarkClient:
         resp.raise_for_status()
         return resp.content
 
-    def send_msg(self, text: str, chat_id: str, root_id: str=None):
+    def send_msg(self, text: str, chat_id: str, root_id: str=None, quote_id: str=None):
         """返回服务端分配的消息 id;未能确认发送成功(请求失败,或响应里拿不到 id)时返回 None。"""
         thread_chat = bool(root_id) and self.is_thread_chat(chat_id)
-        pkt = builders.build_send_message_packet(text, str(chat_id), generate_long_request_id(), root_id=root_id, thread_chat=thread_chat)
+        pkt = builders.build_send_message_packet(text, str(chat_id), generate_long_request_id(), root_id=root_id or quote_id, thread_chat=thread_chat, quote=bool(quote_id and not root_id))
         try:
             content = self._gateway_post(pkt)
         except Exception as e:
-            logger.error(f'发送消息失败: {e}')
+            self.log.error(f'发送消息失败: {e}')
             return None
         try:
             msg_id = builders.decode_put_message_response(content)
         except Exception as e:
-            logger.error(f'服务端已接受发送请求,但响应解析失败,无法确认是否发出: {e}')
+            self.log.error(f'服务端已接受发送请求,但响应解析失败,无法确认是否发出: {e}')
             return None
         if not msg_id:
-            logger.error('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出')
+            self.log.error('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出')
             return None
         return msg_id
 
@@ -187,7 +198,7 @@ class LarkClient:
             self.api('messages.PutReadMessagesRequest', data)
             return True
         except Exception as e:
-            logger.debug(f'标记已读失败: {e}')
+            self.log.debug(f'标记已读失败: {e}')
             return False
 
     def get_group_name(self, chat_id: str):
@@ -225,12 +236,26 @@ class LarkClient:
             try:
                 info = self.get_chat_info(chat_id)
             except Exception as e:
-                logger.debug(f'查询会话模式失败,按普通会话处理: {e}')
+                self.log.debug(f'查询会话模式失败,按普通会话处理: {e}')
                 return False
             if info is None:
                 return False
             self._thread_chats[chat_id] = decoders.is_thread_chat(info)
         return self._thread_chats[chat_id]
+
+    def is_self_chat(self, chat_id: str) -> bool:
+        """「和自己的会话」。查询失败一律当不是,宁可不触发也不要误把发给别人的消息交给 agent。"""
+        chat_id = str(chat_id)
+        if chat_id not in self._self_chats:
+            try:
+                info = self.get_chat_info(chat_id)
+            except Exception as e:
+                self.log.debug(f'查询会话成员失败,按普通私聊处理: {e}')
+                return False
+            if info is None:
+                return False
+            self._self_chats[chat_id] = decoders.is_self_chat(info)
+        return self._self_chats[chat_id]
 
     def pull_history(self, chat_id: str, positions, save_storage=None):
         resp = self.api('messages.PullMessagesByPositionsRequest', {'chatId': str(chat_id), 'positions': [int(p) for p in positions]})
