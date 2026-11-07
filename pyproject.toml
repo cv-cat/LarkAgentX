@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "larkx"
-version = "2.0.0"
+version = "2.1.0"
 description = "飞书网页版消息通道 + 本地 coding agent 接入"
 requires-python = ">=3.9"
 dependencies = [
@@ -17,6 +17,8 @@ dependencies = [
     "qrcode[pil]==8.2",
     "python-dotenv==1.1.0",
     "questionary==2.1.0",
+    "fastapi==0.115.12",
+    "uvicorn==0.34.2",
 ]
 
 [project.optional-dependencies]
@@ -30,3 +32,4 @@ include = ["larkx*"]
 
 [tool.setuptools.package-data]
 "larkx.proto" = ["cmd_map.json"]
+"larkx.web" = ["static/*", "static/assets/*"]

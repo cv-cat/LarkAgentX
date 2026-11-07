@@ -1,7 +1,8 @@
 import json
 from datetime import datetime
-from sqlalchemy import create_engine, desc
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import and_, create_engine, desc, exists, func, or_
+from sqlalchemy.orm import aliased, sessionmaker
+from .. import accounts
 from ..config import load_config
 from .models import AgentSession, Base, Chat, Message
 
@@ -13,13 +14,50 @@ def _json_default(o):
     return str(o)
 
 
+def _without_echo_twins(q):
+    """旧版 lark send 用本地 id 落库,WS 回显又插了一条,同一条消息存了两份。
+    没有 position 的那份是多余的:只在读取时滤掉,不动用户数据。没有孪生的(监听没开时发的)照常显示。"""
+    twin = aliased(Message)
+    has_twin = exists().where(and_(twin.chat_id == Message.chat_id, twin.sender_id == Message.sender_id, twin.content == Message.content,
+                                   twin.position > 0, func.abs(twin.create_time - Message.create_time) <= 60))
+    return q.filter(or_(Message.position > 0, ~has_twin))
+
+
 class Storage:
-    def __init__(self, url: str=None):
-        cfg = load_config()
-        self.url = url or cfg['storage_url']
+    def __init__(self, url: str=None, account_id: str=None):
+        account_id = accounts.normalize(account_id)
+        if url:
+            self.url = url
+        elif account_id == accounts.DEFAULT_ID:
+            # 默认账号沿用 LARKX_STORAGE_URL(可切 MySQL);其它账号各用自己目录下的 SQLite
+            self.url = load_config()['storage_url']
+        else:
+            accounts.home_of(account_id).mkdir(parents=True, exist_ok=True)
+            self.url = f'sqlite:///{accounts.db_path(account_id)}'
         self.engine = create_engine(self.url, pool_pre_ping=True)
         Base.metadata.create_all(self.engine)
         self.Session = sessionmaker(bind=self.engine)
+
+    def close(self):
+        self.engine.dispose()
+
+    def save_sent(self, msg_id: str, chat_id: str, text: str, user_id: str, root_id: str=None) -> bool:
+        """发送成功后用服务端 id 落库,监听收到回显时会补全这条而不是再插一条。"""
+        return self.save_message({'msg_id': msg_id, 'chat_id': chat_id, 'chat_type': 0, 'scope': 'topic' if root_id else 'chat', 'anchor': root_id or '', 'from_id': user_id, 'msg_type': 4, 'msg_type_name': 'TEXT', 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
+
+    def message_exists(self, msg_id: str, chat_id: str) -> bool:
+        s = self.Session()
+        try:
+            return s.query(Message.id).filter_by(msg_id=str(msg_id), chat_id=str(chat_id)).first() is not None
+        finally:
+            s.close()
+
+    def oldest_position(self, chat_id: str) -> int:
+        s = self.Session()
+        try:
+            return s.query(func.min(Message.position)).filter(Message.chat_id == str(chat_id), Message.position > 0).scalar() or 0
+        finally:
+            s.close()
 
     def save_message(self, msg: dict, sender_name='', chat_name='', direction='in') -> bool:
         s = self.Session()
@@ -85,6 +123,101 @@ class Storage:
             rows = q.order_by(desc(Message.create_time)).limit(limit).all()
             rows.reverse()
             return rows
+        finally:
+            s.close()
+
+    def daily_counts(self, days=7, now=None):
+        """最近 days 天(含今天)每天的收/发消息数。按本地日期分桶,在 Python 里做以兼容 SQLite/MySQL。"""
+        from datetime import timedelta
+        today = datetime.fromtimestamp(now).date() if now else datetime.now().date()
+        start = today - timedelta(days=days - 1)
+        cutoff = int(datetime.combine(start, datetime.min.time()).timestamp())
+        buckets = {start + timedelta(days=i): {'in': 0, 'out': 0} for i in range(days)}
+        s = self.Session()
+        try:
+            for ts, direction in _without_echo_twins(s.query(Message.create_time, Message.direction)).filter(Message.create_time >= cutoff).all():
+                d = datetime.fromtimestamp(ts).date()
+                if d in buckets and direction in ('in', 'out'):
+                    buckets[d][direction] += 1
+        finally:
+            s.close()
+        return [{'date': d.strftime('%m-%d'), **v} for d, v in buckets.items()]
+
+    def chat_summaries(self, limit=200, me: str=''):
+        """会话列表: 每个会话的名称/类型/消息数/最后一条消息/对方 id,按最后消息时间倒序。"""
+        s = self.Session()
+        try:
+            latest = (_without_echo_twins(s.query(Message.chat_id, func.max(Message.create_time).label('t'), func.count(Message.id).label('n')))
+                      .group_by(Message.chat_id).subquery())
+            rows = (_without_echo_twins(s.query(Message, latest.c.n)
+                    .join(latest, (Message.chat_id == latest.c.chat_id) & (Message.create_time == latest.c.t)))
+                    .order_by(desc(Message.create_time), desc(Message.id)).all())
+            peers = dict(s.query(Message.chat_id, func.max(Message.sender_id))
+                         .filter(Message.sender_id != str(me), Message.sender_id != '').group_by(Message.chat_id).all())
+            names = {c.chat_id: (c.name, c.chat_type) for c in s.query(Chat).all()}
+            out, seen = [], set()
+            for m, n in rows:
+                if m.chat_id in seen:      # 同一秒的多条只取最新一条
+                    continue
+                seen.add(m.chat_id)
+                name, ctype = names.get(m.chat_id, ('', 0))
+                out.append({'chat_id': m.chat_id, 'name': name or m.chat_name or '', 'chat_type': ctype or m.chat_type,
+                            'count': n, 'last_time': m.create_time, 'last_sender': m.sender_name or m.sender_id,
+                            'last_direction': m.direction, 'last_content': (m.content or '')[:80],
+                            'peer_id': peers.get(m.chat_id, '')})
+                if len(out) >= limit:
+                    break
+            return out
+        finally:
+            s.close()
+
+    def topic_summaries(self, chat_id: str):
+        """某会话下的话题(anchor 非空)及各自消息数、最近时间。"""
+        s = self.Session()
+        try:
+            rows = (s.query(Message.anchor, func.count(Message.id), func.max(Message.create_time))
+                    .filter(Message.chat_id == str(chat_id), Message.anchor != '')
+                    .group_by(Message.anchor).all())
+            out = []
+            for anchor, n, last in rows:
+                first = (s.query(Message).filter(Message.chat_id == str(chat_id), Message.anchor == anchor)
+                         .order_by(Message.create_time, Message.id).first())
+                out.append({'anchor': anchor, 'count': n, 'last_time': last, 'title': (first.content or '')[:40] if first else ''})
+            out.sort(key=lambda t: t['last_time'] or 0, reverse=True)
+            return out
+        finally:
+            s.close()
+
+    def recent_messages(self, limit=30):
+        s = self.Session()
+        try:
+            return _without_echo_twins(s.query(Message)).order_by(desc(Message.create_time), desc(Message.id)).limit(limit).all()
+        finally:
+            s.close()
+
+    def message_counts(self) -> dict:
+        s = self.Session()
+        try:
+            rows = _without_echo_twins(s.query(Message.direction, func.count(Message.id))).group_by(Message.direction).all()
+            return {d: n for d, n in rows}
+        finally:
+            s.close()
+
+    def chat_page(self, chat_id: str, anchor: str=None, before: tuple=None, limit=50):
+        """倒序翻页取一页消息(返回按时间正序)。before 是上一页最老那条的 (create_time, id):
+        回填的历史主键比新消息大,不能按主键排;带上主键是为了同一秒的消息不漏页。"""
+        s = self.Session()
+        try:
+            q = _without_echo_twins(s.query(Message)).filter(Message.chat_id == str(chat_id))
+            if anchor is not None:
+                q = q.filter(Message.anchor == anchor)
+            if before:
+                q = q.filter(or_(Message.create_time < before[0], and_(Message.create_time == before[0], Message.id < before[1])))
+            rows = q.order_by(desc(Message.create_time), desc(Message.id)).limit(limit + 1).all()
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            rows.reverse()
+            return rows, has_more
         finally:
             s.close()
 

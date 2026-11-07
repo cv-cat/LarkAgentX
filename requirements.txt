@@ -7,5 +7,7 @@ SQLAlchemy==2.0.30
 qrcode[pil]==8.2
 python-dotenv==1.1.0
 questionary==2.1.0
+fastapi==0.115.12
+uvicorn==0.34.2
 # 可选: MySQL 存储后端
 # PyMySQL==1.1.0

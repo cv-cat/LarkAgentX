@@ -1,0 +1,125 @@
+/*
+ * 设计令牌:颜色只写在这个文件里,组件只用语义名(bg-surface-1、text-fg-2、ring-line-2…)。
+ * 分层和取值的思路来自 NextLabs:白底 + 浅灰面板 + 白卡片,层次靠 4–6% 的墨色填充,
+ * 文字层级靠透明度,按钮和徽章是胶囊。强调色只有一个:飞书蓝,只用于焦点、选中和"自己"。
+ */
+:root,
+.light {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --surface-1: #f4f5f7;
+  --surface-2: #e6e7ec;
+  --surface-3: #ffffff;
+
+  --fg-1: rgb(13 13 13 / 0.94);
+  --fg-2: rgb(13 13 13 / 0.64);
+  --fg-3: rgb(13 13 13 / 0.5);
+  --fg-4: rgb(13 13 13 / 0.36);
+
+  --line-1: rgb(13 13 13 / 0.06);
+  --line-2: rgb(13 13 13 / 0.1);
+  --line-3: rgb(13 13 13 / 0.16);
+
+  --fill-1: rgb(13 13 13 / 0.03);
+  --fill-2: rgb(13 13 13 / 0.05);
+  --fill-3: rgb(13 13 13 / 0.08);
+
+  --invert: #0d0d0d;
+  --invert-fg: #ffffff;
+
+  --accent: #3370ff;
+  --accent-strong: #245bdb;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(51 112 255 / 0.1);
+  --accent-ring: rgb(51 112 255 / 0.4);
+
+  --success: #0f7a46;
+  --warning: #b45309;
+  --danger: #cc2f36;
+  --success-soft: rgb(15 122 70 / 0.1);
+  --warning-soft: rgb(180 83 9 / 0.1);
+  --danger-soft: rgb(204 47 54 / 0.1);
+
+  /* logo 的深色头翼:浅色底用飞书深蓝,深色底换亮蓝,否则融进背景 */
+  --logo-head: #133c9a;
+  /* 近 7 天图表的两个系列,已用 dataviz 校验脚本验过色盲区分和对比度 */
+  --chart-in: #3370ff;
+  --chart-out: #009e86;
+
+  --terminal: #0d0e10;
+  --terminal-fg: #f4f5f7;
+  --terminal-ok: #3ecf8e;
+
+  --scrim: rgb(120 120 120 / 0.5);
+  --glass-fill: rgb(250 250 252 / 0.6);
+  --glass-panel-fill: rgb(250 250 252 / 0.78);
+  --menu-fill: rgb(255 255 255 / 0.92);
+
+  --elevation-raised: 0 0 0 1px var(--line-1), 0 1px 2px 0 rgb(13 13 13 / 0.05);
+  --elevation-float: 0 0 0 1px var(--line-1), 0 1px 2px 0 rgb(13 13 13 / 0.05), 0 12px 28px -16px rgb(13 13 13 / 0.18);
+  --elevation-overlay: 0 0 0 1px var(--line-1), 0 12px 40px -8px rgb(13 13 13 / 0.14), 0 4px 12px -4px rgb(13 13 13 / 0.06);
+  --elevation-glass: 0 0 0 0.5px rgb(0 0 0 / 0.14), inset 0 1px 0 rgb(255 255 255 / 0.9), 0 6px 16px -8px rgb(0 0 0 / 0.14);
+  --elevation-glass-panel: 0 0 0 0.5px rgb(0 0 0 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.9), 0 14px 36px -14px rgb(0 0 0 / 0.22);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --bg: #08090a;
+  --surface-1: #0d0e10;
+  --surface-2: #121316;
+  --surface-3: #17181c;
+
+  --fg-1: rgb(255 255 255 / 0.94);
+  --fg-2: rgb(255 255 255 / 0.66);
+  --fg-3: rgb(255 255 255 / 0.46);
+  --fg-4: rgb(255 255 255 / 0.32);
+
+  --line-1: rgb(255 255 255 / 0.06);
+  --line-2: rgb(255 255 255 / 0.1);
+  --line-3: rgb(255 255 255 / 0.16);
+
+  --fill-1: rgb(255 255 255 / 0.03);
+  --fill-2: rgb(255 255 255 / 0.06);
+  --fill-3: rgb(255 255 255 / 0.1);
+
+  --invert: #fcfcfd;
+  --invert-fg: #08090a;
+
+  --accent: #5b8cff;
+  --accent-strong: #8fb0ff;
+  --accent-fg: #08090a;
+  --accent-soft: rgb(91 140 255 / 0.16);
+  --accent-ring: rgb(91 140 255 / 0.5);
+
+  --success: #3ecf8e;
+  --warning: #f2b54b;
+  --danger: #f4646a;
+  --success-soft: rgb(62 207 142 / 0.12);
+  --warning-soft: rgb(242 181 75 / 0.12);
+  --danger-soft: rgb(244 100 106 / 0.12);
+
+  --logo-head: #8fb0ff;
+  --chart-in: #5b8cff;
+  --chart-out: #00ad95;
+
+  --terminal: #121316;
+  --terminal-fg: #f4f5f7;
+  --terminal-ok: #3ecf8e;
+
+  --scrim: rgb(0 0 0 / 0.6);
+  --glass-fill: rgb(160 162 170 / 0.16);
+  --glass-panel-fill: rgb(26 26 28 / 0.82);
+  --menu-fill: rgb(30 31 35 / 0.94);
+
+  --elevation-raised: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 0 0 1px var(--line-1), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+  --elevation-float: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 0 0 1px var(--line-1), 0 14px 32px -16px rgb(0 0 0 / 0.7);
+  --elevation-overlay: inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 0 0 1px var(--line-2), 0 16px 48px -12px rgb(0 0 0 / 0.7);
+  --elevation-glass: 0 0 0 0.5px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18), 0 6px 18px -6px rgb(0 0 0 / 0.5);
+  --elevation-glass-panel: 0 0 0 0.5px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.14), 0 18px 48px rgb(0 0 0 / 0.55);
+}
+
+:root {
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}

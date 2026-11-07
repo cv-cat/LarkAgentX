@@ -1,0 +1,381 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* 只含标题用字的 Noto Serif SC 子集,见 webui/scripts/subset_serif.py */
+@font-face {
+  font-family: "LarkX Serif";
+  src: url("../assets/NotoSerifSC-subset.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+
+/* Tailwind 默认的色板、字号、圆角、阴影全部清空:只有下面这些语义名存在,写不出裸色值和随手的字号 */
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-bg: var(--bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-fg-1: var(--fg-1);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-fg-4: var(--fg-4);
+  --color-line-1: var(--line-1);
+  --color-line-2: var(--line-2);
+  --color-line-3: var(--line-3);
+  --color-fill-1: var(--fill-1);
+  --color-fill-2: var(--fill-2);
+  --color-fill-3: var(--fill-3);
+  --color-invert: var(--invert);
+  --color-invert-fg: var(--invert-fg);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ring: var(--accent-ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-scrim: var(--scrim);
+  --color-chart-in: var(--chart-in);
+  --color-chart-out: var(--chart-out);
+  --color-terminal: var(--terminal);
+  --color-terminal-fg: var(--terminal-fg);
+  --color-terminal-ok: var(--terminal-ok);
+
+  --font-*: initial;
+  --font-sans: "Geist Variable", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", monospace;
+  --font-serif: "LarkX Serif", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", SimSun, Georgia, serif;
+
+  --radius-*: initial;
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+
+  --shadow-*: initial;
+  --shadow-raised: var(--elevation-raised);
+  --shadow-float: var(--elevation-float);
+  --shadow-overlay: var(--elevation-overlay);
+
+  --text-*: initial;
+  --text-micro: 11px;
+  --text-micro--line-height: 16px;
+  --text-caption: 12px;
+  --text-caption--line-height: 18px;
+  --text-small: 13px;
+  --text-small--line-height: 21px;
+  --text-body: 14px;
+  --text-body--line-height: 24px;
+  --text-lead: 16px;
+  --text-lead--line-height: 28px;
+  --text-title: 20px;
+  --text-title--line-height: 30px;
+  --text-heading: 24px;
+  --text-heading--line-height: 34px;
+  --text-headline: 36px;
+  --text-headline--line-height: 48px;
+  --text-feature: 44px;
+  --text-feature--line-height: 56px;
+  --text-display: 56px;
+  --text-display--line-height: 68px;
+  --text-hero: 72px;
+  --text-hero--line-height: 86px;
+}
+
+/* 中文衬线有自己的字重,不看 font-* 工具类(不进 layer,优先级高过它们) */
+.font-serif {
+  font-weight: 600;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* 中文: 不伪造粗体/斜体;汉字和拉丁字母之间由浏览器自动留空隙 */
+    font-synthesis: none;
+    text-autospace: normal;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 24px;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 1px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-3) transparent;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 控制台里每一页的滚动区:永远预留滚动条位置,页面高矮不同也不会左右抖 */
+@utility page-scroll {
+  position: relative;       /* 兜住里面绝对定位的东西(如 Radix 开关的隐藏 input),否则会把整个文档撑出滚动条 */
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility glass {
+  background-color: var(--glass-fill);
+  backdrop-filter: blur(8px) saturate(1.5);
+  box-shadow: var(--elevation-glass);
+}
+
+@utility glass-panel {
+  background-color: var(--glass-panel-fill);
+  backdrop-filter: blur(12px) saturate(1.5);
+  box-shadow: var(--elevation-glass-panel);
+}
+
+@utility menu-panel {
+  background-color: var(--menu-fill);
+  backdrop-filter: blur(16px) saturate(1.5);
+  box-shadow: var(--elevation-overlay);
+}
+
+/* 按下时略微缩一下再弹回 */
+@utility press {
+  transition: transform 160ms var(--motion-ease), background-color 120ms, color 120ms, box-shadow 120ms, opacity 120ms;
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* 入场: 只用 CSS,不等 JS,首屏不会空白 */
+.blur-in {
+  animation: blur-in 420ms var(--motion-ease) both;
+  animation-delay: var(--delay, 40ms);
+}
+@keyframes blur-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+    filter: blur(6px);
+  }
+}
+.fade-in {
+  animation: fade-in 180ms var(--motion-ease) both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.rise {
+  animation: rise 380ms var(--motion-ease) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+}
+/* 滚动到视口时淡入: 只用 CSS,不支持的浏览器直接显示,不会有内容被藏住 */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .reveal {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 22%;
+    }
+  }
+}
+.pop-in {
+  animation: pop-in 200ms var(--motion-ease) both;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* 主按钮:悬停时一道高光划过 */
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.2), transparent);
+  transition: transform 700ms var(--motion-ease);
+  pointer-events: none;
+}
+.sheen:hover::before {
+  transform: translateX(100%);
+}
+
+/* 首屏点阵:一层常亮的淡点,一层跟着鼠标的亮点 */
+.dot-field,
+.dot-field-lamp {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(currentColor 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  background-position: 11px 11px;
+}
+.dot-field {
+  color: var(--fg-4);
+  opacity: 0.55;
+  mask-image: linear-gradient(to bottom, black 55%, transparent 96%);
+}
+.dot-field-lamp {
+  color: var(--fg-2);
+  mask-image: radial-gradient(360px circle at var(--x, 86%) var(--y, 14%), black, transparent 70%);
+}
+
+/* 页头:页面在顶部时透明一整条,往下滚收成一条悬浮的玻璃胶囊。全靠滚动时间线,不跑 JS */
+.header-float {
+  background-color: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(10px);
+}
+@supports (animation-timeline: scroll()) {
+  @media (min-width: 960px) and (prefers-reduced-motion: no-preference) {
+    .header-float {
+      animation: header-float linear both;
+      animation-timeline: scroll(root);
+      animation-range: 0 120px;
+    }
+  }
+}
+@keyframes header-float {
+  from {
+    background-color: transparent;
+    backdrop-filter: blur(0);
+    box-shadow: none;
+  }
+  to {
+    max-width: min(1040px, 100% - 32px);
+    height: 48px;
+    margin-top: 8px;
+    padding-inline: 16px 8px;
+    border-radius: 24px;
+    background-color: var(--glass-panel-fill);
+    backdrop-filter: blur(12px) saturate(1.5);
+    box-shadow: var(--elevation-glass-panel);
+  }
+}
+
+/* 横向滚动条带 */
+.marquee {
+  mask-image: linear-gradient(to right, transparent, black 6%, black 94%, transparent);
+}
+.marquee-track {
+  display: flex;
+  gap: 12px;
+  width: max-content;
+  animation: marquee 70s linear infinite;
+}
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+@keyframes marquee {
+  to {
+    transform: translateX(calc(-50% - 6px));
+  }
+}
+
+.terminal-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: currentColor;
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.progress-line {
+  animation: progress-line var(--duration, 8s) linear both;
+  transform-origin: left;
+}
+@keyframes progress-line {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .blur-in,
+  .fade-in,
+  .rise,
+  .pop-in,
+  .marquee-track,
+  .terminal-caret,
+  .progress-line,
+  .pulse-dot {
+    animation: none;
+  }
+  .press {
+    transition: none;
+  }
+}

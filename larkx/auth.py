@@ -1,10 +1,12 @@
 import json
+import os
 import re
 import time
 from pathlib import Path
 import requests
 from loguru import logger
-from .config import CREDENTIALS_PATH, DATA_DIR, load_config
+from . import accounts
+from .config import load_config
 from .region import Region, get_region
 
 
@@ -13,9 +15,14 @@ class AuthExpired(Exception):
 
 
 class LarkAuth:
-    def __init__(self, path: Path=CREDENTIALS_PATH):
-        self.path = path
-        self.region: Region = get_region(load_config()['region'])
+    def __init__(self, account_id: str=None, path: Path=None):
+        if isinstance(account_id, os.PathLike):
+            # 兼容旧签名 LarkAuth(path)
+            account_id, path = None, Path(account_id)
+        self.account_id = accounts.normalize(account_id)
+        self.path = path or accounts.credentials_path(self.account_id)
+        # 新账号还没有凭证时,区域取创建账号时选的,其次才是 LARKX_REGION
+        self.region: Region = get_region(accounts.read_meta(self.account_id).get('region') or load_config()['region'])
         self.cookies: dict = {}
         self.saved_at: float = 0
         self.device_id: str = ''
@@ -23,6 +30,7 @@ class LarkAuth:
         self.user_id: str = ''
         self.csrf_token: str = ''
         self.web_app_id: str = ''
+        self.transient_error: bool = False
         self.load()
 
     def load(self) -> bool:
@@ -45,7 +53,7 @@ class LarkAuth:
             return False
 
     def save(self):
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({'region': self.region.name, 'cookies': self.cookies, 'saved_at': self.saved_at, 'device_id': self.device_id, 'app_key': self.app_key, 'user_id': self.user_id, 'csrf_token': self.csrf_token, 'web_app_id': self.web_app_id}, ensure_ascii=False, indent=2), encoding='utf-8')
         logger.info(f'凭证已保存到 {self.path}')
 
@@ -82,6 +90,7 @@ class LarkAuth:
         return msg
 
     def validate(self, fetch_profile: bool=False) -> tuple:
+        self.transient_error = False
         if not self.cookies:
             return (False, '无凭证,请先 lark auth import')
         if not self.device_id:
@@ -95,18 +104,23 @@ class LarkAuth:
                 age_h = (time.time() - self.saved_at) / 3600 if self.saved_at else -1
                 return (False, f'会话已被服务端注销(凭证保存于 {age_h:.1f}h 前): {reason}\n请重新登录: lark auth qr 或 lark auth import')
         except Exception as e:
+            self.transient_error = True
             return (False, f'ticket 探针网络异常(先检查网络,不一定是凭证问题): {e}')
         if fetch_profile:
             self._fetch_profile()
         age_h = (time.time() - self.saved_at) / 3600 if self.saved_at else -1
         return (True, f"有效(user_id={self.user_id or '?'}, 已保存 {age_h:.1f}h)")
 
+    def fetch_web_user(self) -> dict:
+        ua = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'}
+        headers = {**ua, 'x-app-id': '12', 'x-api-version': '1.0.8', 'x-csrf-token': self.csrf_token or self.cookies.get('swp_csrf_token', ''), 'x-device-info': 'platform=websdk', 'x-lgw-os-type': '1', 'x-lgw-terminal-type': '2', 'origin': self.region.web_origin, 'referer': self.region.web_origin + '/'}
+        r = requests.get(self.region.user_info_url, params={'app_id': '12', '_t': int(time.time() * 1000)}, headers=headers, cookies=self.cookies, timeout=10)
+        return r.json()['data']['user']
+
     def _fetch_profile(self):
         ua = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'}
         try:
-            headers = {**ua, 'x-app-id': '12', 'x-api-version': '1.0.8', 'x-csrf-token': self.csrf_token or self.cookies.get('swp_csrf_token', ''), 'x-device-info': 'platform=websdk', 'x-lgw-os-type': '1', 'x-lgw-terminal-type': '2', 'origin': self.region.web_origin, 'referer': self.region.web_origin + '/'}
-            r = requests.get(self.region.user_info_url, params={'app_id': '12', '_t': int(time.time() * 1000)}, headers=headers, cookies=self.cookies, timeout=10)
-            self.user_id = str(r.json()['data']['user']['id'])
+            self.user_id = str(self.fetch_web_user()['id'])
         except Exception as e:
             logger.warning(f'获取用户信息失败: {e}')
         if not self.app_key or not self.web_app_id:
