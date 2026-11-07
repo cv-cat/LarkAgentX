@@ -7,10 +7,10 @@
 
 <div align="center">
 
-[![Python](https://img.shields.io/badge/python-3.9%2B-232838?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
-[![GitHub stars](https://img.shields.io/github/stars/cv-cat/LarkAgentX?style=flat-square&logo=github&color=232838)](https://github.com/cv-cat/LarkAgentX/stargazers)
-[![Feishu | Lark](https://img.shields.io/badge/Feishu%20%7C%20Lark-232838?style=flat-square)](#快速上手)
-[![Claude Code | Codex](https://img.shields.io/badge/Claude%20Code%20%7C%20Codex-232838?style=flat-square)](#为什么用-larkagentx)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=FFD43B&labelColor=232838)](pyproject.toml)
+[![GitHub stars](https://img.shields.io/github/stars/cv-cat/LarkAgentX?style=flat-square&logo=github&labelColor=232838&color=E3A008)](https://github.com/cv-cat/LarkAgentX/stargazers)
+[![Feishu · Lark](https://img.shields.io/badge/platform-Feishu%20%C2%B7%20Lark-3370FF?style=flat-square&labelColor=232838)](#快速上手)
+[![Claude Code · Codex](https://img.shields.io/badge/agent-Claude%20Code%20%C2%B7%20Codex-D97757?style=flat-square&labelColor=232838)](#为什么用-larkagentx)
 
 [主页](https://larkagentx.cvcat.site) · **简体中文** · [English](README_EN.md)
 
