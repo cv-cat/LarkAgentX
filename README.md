@@ -43,10 +43,8 @@ lark web            # 打开 http://127.0.0.1:8765 ，扫码添加账号
 
 ## 控制台
 
-<p>
-  <img src="static/resource/webui-overview.png" width="49%" alt="账号概览">
-  <img src="static/resource/webui-chats.png" width="49%" alt="聊天记录">
-</p>
+<img src="static/resource/webui-chats.png" width="100%" alt="聊天记录">
+<img src="static/resource/webui-overview.png" width="100%" alt="账号概览">
 
 账号、聊天记录、回复方式、agent 和触发规则都在这里管理，保存后立即生效。[在线体验](https://larkagentx.cvcat.site/console)
 
