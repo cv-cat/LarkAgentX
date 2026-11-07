@@ -43,10 +43,8 @@ Claude Code or Codex must be installed on the same machine. Scan with the scanne
 
 ## Web console
 
-<p>
-  <img src="static/resource/webui-overview.png" width="49%" alt="Account overview">
-  <img src="static/resource/webui-chats.png" width="49%" alt="Chat history">
-</p>
+<img src="static/resource/webui-chats.png" width="100%" alt="Chat history">
+<img src="static/resource/webui-overview.png" width="100%" alt="Account overview">
 
 Accounts, chat history, reply modes, the agent and trigger rules are all managed here. Changes apply right away. [Try the demo](https://larkagentx.cvcat.site/console).
 
