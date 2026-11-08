@@ -18,6 +18,7 @@ export interface Account {
   state: AccountState
   error: string
   backend: string
+  memory: boolean
   queue: { busy: number; queued: number }
 }
 
@@ -76,6 +77,7 @@ export interface Message {
   type: string
   content: string
   anchor: string
+  agent: boolean
 }
 
 export interface Triggers {
@@ -103,7 +105,38 @@ export interface Settings {
   mark_read: boolean
   reply_in_topic: boolean
   reply_mode: string
+  reply_signature: string
+  ack_reaction: boolean
+  deny_reply: string
+  memory_enabled: boolean
+  memory_review_at: string
   triggers: Triggers
+}
+
+export interface Person {
+  id: string
+  name: string
+  desc: string
+  avatar: string
+}
+
+export interface MemoryData {
+  entries: string[]
+  used: number
+  limit: number
+  last_review: string
+}
+
+export interface Task {
+  id: number
+  kind: 'once' | 'daily'
+  when: string
+  next_run: number
+  chat_id: string
+  chat: string
+  anchor: string
+  content: string
+  created_by: string
 }
 
 export interface LoginSnapshot {
@@ -121,20 +154,18 @@ export interface LogLine {
   text: string
 }
 
-// ---------- 访问令牌: 从 ?token= 取一次,存 sessionStorage,地址栏里抹掉 ----------
-const TOKEN_KEY = 'larkx_token'
-let token = sessionStorage.getItem(TOKEN_KEY) || ''
-const fromUrl = new URLSearchParams(location.search).get('token')
-if (fromUrl) {
-  token = fromUrl
-  sessionStorage.setItem(TOKEN_KEY, token)
-  history.replaceState(null, '', location.pathname + location.hash)
+// ---------- 访问令牌: 换成 HttpOnly cookie,之后的请求都靠 cookie,令牌不出现在网址里 ----------
+/** 用访问令牌换 cookie。令牌不对时抛错。 */
+export async function login(token: string): Promise<void> {
+  const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) })
+  if (!res.ok) throw new Error(res.status === 401 ? '访问令牌不对' : `${res.status} ${res.statusText}`)
 }
 
-export function setToken(t: string) {
-  token = t
-  sessionStorage.setItem(TOKEN_KEY, t)
-}
+// lark web 打印的链接带 #token=(旧版是 ?token=):取出来换 cookie,地址栏里抹掉
+const linkToken = new URLSearchParams(location.hash.slice(1)).get('token') || new URLSearchParams(location.search).get('token')
+if (linkToken) history.replaceState(null, '', location.pathname)
+// 第一批请求等 cookie 换好再发,免得先弹出令牌输入框
+const ready: Promise<unknown> = linkToken ? login(linkToken).catch(() => undefined) : Promise.resolve()
 
 export class TokenRequired extends Error {}
 
@@ -150,9 +181,9 @@ function errorText(data: unknown, res: Response): string {
 }
 
 export async function api<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  await ready
   const headers: Record<string, string> = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  if (token) headers.Authorization = 'Bearer ' + token
   const res = await fetch('/api' + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined })
   let data: unknown = null
   try {
@@ -169,10 +200,3 @@ export async function api<T = unknown>(method: string, path: string, body?: unkn
 }
 
 export const enc = encodeURIComponent
-
-/** <img> 带不了请求头,配了令牌时走 query */
-export function withToken(url: string): string {
-  // 只有接口要令牌;打包进来的静态图(可能是 data: 地址)原样返回
-  if (!url || !token || !url.startsWith('/api/')) return url
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + enc(token)
-}

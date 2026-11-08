@@ -6,8 +6,12 @@ import requests
 import websockets
 from loguru import logger
 from .auth import LarkAuth
-from .proto import builders, decoders, proto_pb2 as P
+from .proto import builders, compose, decoders, proto_pb2 as P
 from .proto.ids import generate_access_key, generate_long_request_id, generate_request_id
+
+CMD_PUSH_MESSAGES = 6    # 新消息推送
+CMD_BATCH_COPY = 134     # 逐条转发:只推来消息 id 和最后一条
+CMD_PUSH_SID = 6000      # 只推来 sid,完整内容要按 sid 再拉
 
 
 class LarkClient:
@@ -22,6 +26,9 @@ class LarkClient:
         self._loop_started = False
         self._thread_chats = {}
         self._self_chats = {}
+        self._bots = {}
+        self._bad_frames = 0
+        self._bad_frame_warned = 0.0
 
     def build_ws_url(self) -> str:
         device_id = self.auth.device_id
@@ -112,20 +119,60 @@ class LarkClient:
                 async for raw in ws:
                     try:
                         _, packet = decoders.parse_ws_frame(raw)
+                        if 'json' in packet:
+                            continue   # payloadEncoding=json 的帧不是消息推送,也不带 sid
                         sid, cmd = (packet.get('sid'), packet.get('cmd'))
                         if sid is not None:
                             await self.send_ack(ws, sid)
-                        if cmd != 6:
-                            continue
-                        for msg in decoders.decode_push_messages(raw):
-                            if not msg.get('from_id'):
-                                continue
-                            asyncio.run_coroutine_threadsafe(self._dispatch(msg, on_message), self.loop)
+                        if cmd == CMD_PUSH_MESSAGES:
+                            for msg in decoders.push_messages(packet.get('payload') or b''):
+                                if msg.get('from_id'):
+                                    asyncio.run_coroutine_threadsafe(self._dispatch(msg, on_message), self.loop)
+                        elif cmd == CMD_PUSH_SID:
+                            # 服务端只推来 sid(机器人卡片等很多消息这样推),要按 sid 再拉一次
+                            asyncio.run_coroutine_threadsafe(self._pull_sids(decoders.push_sids(raw), on_message), self.loop)
+                        elif cmd == CMD_BATCH_COPY:
+                            # 有人一次逐条转发几条消息
+                            asyncio.run_coroutine_threadsafe(self._batch_copy(packet.get('payload') or b'', on_message), self.loop)
                     except Exception as e:
-                        self.log.debug(f'跳过异常帧: {e}')
-                        continue
+                        self._warn_bad_frame(e)
             finally:
                 heartbeat_task.cancel()
+
+    def _warn_bad_frame(self, error):
+        """解不开的帧:限频告警(每 10 分钟最多一条),不再静默跳过。"""
+        self._bad_frames += 1
+        now = time.time()
+        if now - self._bad_frame_warned >= 600:
+            self.log.warning(f'有 {self._bad_frames} 个 WS 帧解析失败,已跳过。最近一次: {error!r}')
+            self._bad_frame_warned, self._bad_frames = now, 0
+
+    async def _pull_sids(self, sids, on_message):
+        if not sids:
+            return
+        try:
+            resp = await asyncio.to_thread(self.api, 'improto.PullPacketsBySidsRequest', {'sids': sids})
+            msgs = [m for p in ((resp or {}).get('packets') or {}).values() if int(p.get('cmd') or 0) == CMD_PUSH_MESSAGES
+                    for m in decoders.push_messages(p.get('payload') or b'') if m.get('from_id')]
+        except Exception as e:
+            self.log.warning(f'按 sid 拉取推送失败,这几条等补收: {e}')
+            return
+        for msg in msgs:
+            await self._dispatch(msg, on_message)
+
+    async def _batch_copy(self, payload: bytes, on_message):
+        try:
+            ids, msgs = decoders.batch_copy_messages(payload)
+            have = {str(m.get('msg_id')) for m in msgs}
+            rest = [i for i in ids if i not in have]
+            if rest:
+                msgs += await asyncio.to_thread(self.messages_by_ids, rest)
+            msgs = sorted((m for m in msgs if m.get('from_id')), key=lambda m: int(m.get('position') or 0))
+        except Exception as e:
+            self.log.warning(f'处理逐条转发的消息失败,这几条等补收: {e}')
+            return
+        for msg in msgs:
+            await self._dispatch(msg, on_message)
 
     async def _dispatch(self, msg, on_message):
         try:
@@ -156,10 +203,20 @@ class LarkClient:
         resp.raise_for_status()
         return resp.content
 
-    def send_msg(self, text: str, chat_id: str, root_id: str=None, quote_id: str=None):
-        """返回服务端分配的消息 id;未能确认发送成功(请求失败,或响应里拿不到 id)时返回 None。"""
+    def send_msg(self, text: str, chat_id: str, root_id: str=None, quote_id: str=None, markdown: bool=False, mentions=None):
+        """发文字(markdown=True 时按 markdown 发富文本;mentions 是 [{'user_id', 'name'}],正文里的「@名字」变成真正的 @)。
+        返回服务端分配的消息 id;未能确认发送成功时返回 None。"""
+        body = {'markdown': text} if markdown else {'text': text}
+        return self.send(chat_id, root_id=root_id, quote_id=quote_id, mentions=mentions, **body)
+
+    def send(self, chat_id: str, *, text: str=None, markdown: str=None, mentions=None, image_key: str=None, file: dict=None,
+             root_id: str=None, quote_id: str=None):
+        """发一条消息,返回消息 id;没发出去返回 None。root_id 回进话题,quote_id 在主会话里引用回复。"""
+        target = root_id or quote_id
         thread_chat = bool(root_id) and self.is_thread_chat(chat_id)
-        pkt = builders.build_send_message_packet(text, str(chat_id), generate_long_request_id(), root_id=root_id or quote_id, thread_chat=thread_chat, quote=bool(quote_id and not root_id))
+        req = compose.message_request(str(chat_id), text=text, markdown=markdown, mentions=mentions or (), image_key=image_key,
+                                      file=file, root_id=target, thread_chat=thread_chat, quote=bool(quote_id and not root_id))
+        pkt = builders.wrap_packet(5, req, generate_long_request_id())
         try:
             content = self._gateway_post(pkt)
         except Exception as e:
@@ -170,10 +227,99 @@ class LarkClient:
         except Exception as e:
             self.log.error(f'服务端已接受发送请求,但响应解析失败,无法确认是否发出: {e}')
             return None
-        if not msg_id:
-            self.log.error('服务端已接受发送请求,但响应里没有消息 id,无法确认是否发出')
+        if not msg_id or msg_id.startswith('-'):
+            # 被拒收时(比如回复了不能当话题根的消息)返回的 id 是 -1,会话里并没有这条
+            self.log.error(f'服务端没有返回有效的消息 id({msg_id or "空"}),消息没有发出')
             return None
         return msg_id
+
+    def recall(self, msg_id: str):
+        """撤回一条消息(只能撤回自己发的,且有时间限制)。失败时抛异常。"""
+        self.api('messages.DeleteMessageRequest', {'id': str(msg_id)})
+
+    def forward(self, msg_ids, chat_id: str, merge: bool=False) -> list:
+        """把消息转发到 chat_id,返回新消息的 id 列表。merge=True 时合并成一条聊天记录(消息要来自同一个会话)。"""
+        from .proto.ids import generate_request_cid
+        chat_id = str(chat_id)
+        if merge:
+            resp = self.api('messages.PutMergeForwardMessageRequest', {
+                'messageIds': [str(m) for m in msg_ids], 'toChatIds': [chat_id], 'cids': {chat_id: generate_request_cid()},
+                'type': 'MESSAGE', 'locale': self.auth.region.locale})
+            return self._forwarded_ids(resp, chat_id)
+        out = []
+        for m in msg_ids:
+            resp = self.api('messages.PutTransmitMessageRequest', {'chatIds': [chat_id], 'messageId': str(m), 'cids': {chat_id: generate_request_cid()}})
+            out += self._forwarded_ids(resp, chat_id)
+        return out
+
+    @staticmethod
+    def _forwarded_ids(resp, chat_id: str) -> list:
+        resp = resp or {}
+        v = (resp.get('messages') or {}).get(chat_id) or {}
+        if not v:
+            for info in (resp.get('threadMessages') or {}).values():
+                if info and not info.get('failed') and info.get('message'):
+                    v = info['message']
+        msg_id = str(v.get('id') or '')
+        return [msg_id] if msg_id and not msg_id.startswith('-') else []
+
+    def add_reaction(self, msg_id: str, reaction: str='OK'):
+        """给一条消息加个表情回应(OK 是 👌)。注意:加在别人的消息上,那条消息会变成已读。"""
+        self.api('reactions.PutReactionRequest', {'messageId': str(msg_id), 'reactionType': reaction})
+
+    def messages_by_ids(self, msg_ids) -> list:
+        """按 id 取消息(只读,不改变已读状态)。"""
+        resp = self.api('messages.PullMessagesByIdsRequest', {'messageIds': [str(m) for m in msg_ids]})
+        wanted = {str(m) for m in msg_ids}
+        return [decoders.message_dict(v) for v in ((resp or {}).get('messages') or {}).values() if str(v.get('id')) in wanted]
+
+    def feed_chats(self, since: float, max_pages: int=10) -> list:
+        """消息列表里 since(秒级时间戳)之后有更新的会话 id。只读地翻收件箱卡片,不改变已读状态;
+        折叠的会话盒子也展开。卡片按更新时间从新到旧排,翻到比 since 早就停。"""
+        def chat_ids(cards):
+            return [str(c['id']) for c in cards if c.get('type') in (1, 'CHAT') and int(c.get('updateTime') or 0) >= since]
+
+        out, cursor = [], 0
+        for _ in range(max_pages):
+            data = {'type': 'INBOX', 'pullType': 'LOAD_MORE' if cursor else 'REFRESH', 'count': 100}
+            if cursor:
+                data['cursor'] = cursor
+            resp = self.api('feed.PullFeedCardsRequest', data) or {}
+            cards = resp.get('cards') or []
+            out += chat_ids(cards)
+            for box in cards:
+                if box.get('type') in (5, 'BOX') and int(box.get('updateTime') or 0) >= since:
+                    inner = self.api('feed.PullFeedCardsRequest', {'type': 'INBOX', 'pullType': 'REFRESH', 'count': 100,
+                                                                   'parentCardId': int(box['id'])}) or {}
+                    out += chat_ids(inner.get('cards') or [])
+            cursor = int(resp.get('nextCursor') or 0)
+            if not cards or not cursor or min(int(c.get('updateTime') or 0) for c in cards) < since:
+                break
+        return list(dict.fromkeys(out))
+
+    def last_positions(self, chat_ids) -> dict:
+        """各会话在服务端最新一条消息的 position。"""
+        out = {}
+        chat_ids = [str(c) for c in chat_ids]
+        for i in range(0, len(chat_ids), 20):
+            resp = self.api('chats.PullChatsByIdsRequest', {'chatIds': chat_ids[i:i + 20]})
+            for cid, info in ((resp or {}).get('chats') or {}).items():
+                out[str(cid)] = int(info.get('lastMessagePosition') or 0)
+        return out
+
+    def is_bot(self, user_id: str) -> bool:
+        """这个 id 是不是机器人。消息上的发送者类型不可靠(机器人发的私聊也标成用户),要查一次,查过的记住。"""
+        uid = str(user_id)
+        if uid not in self._bots:
+            try:
+                resp = self.api('chatters.PullChattersByIdsRequest', {'chatterIds': [uid]}) or {}
+                v = (resp.get('chatters') or {}).get(uid) or {}
+            except Exception as e:
+                self.log.debug(f'查询 {uid} 是否机器人失败,按真人处理: {e}')
+                return False
+            # Chatter.Type: 1 用户, 2 机器人, 3 AI 助手
+            self._bots[uid] = v.get('type') in (2, 3, 'BOT', 'AI')
+        return self._bots[uid]
 
     def search(self, query: str):
         pkt = builders.build_search_packet(query, generate_long_request_id(), self.auth.region.locale)
@@ -263,12 +409,8 @@ class LarkClient:
         thread_chat = self.is_thread_chat(chat_id)
         out = []
         for pos_key, v in sorted(messages.items(), key=lambda kv: int(kv[0])):
-            message_type = decoders.enum_to_int(v.get('type', 0))
-            chat_type = decoders.enum_to_int(v.get('chatType', 0))
-            summary, data = decoders.decode_message_content(message_type, v.get('content', b''))
-            root_id = v.get('rootId') or ''
-            scope, anchor = decoders.resolve_scope(v.get('id'), message_type, chat_type, root_id, v.get('threadId') or '', thread_chat)
-            msg = {'msg_id': v.get('id'), 'msg_type': message_type, 'msg_type_name': decoders.MSG_TYPE_NAMES.get(message_type, str(message_type)), 'from_id': v.get('fromId'), 'chat_id': v.get('chatId') or v.get('channelId') or str(chat_id), 'chat_type': chat_type, 'chat_type_name': decoders.CHAT_TYPE_NAMES.get(chat_type, str(chat_type)), 'scope': scope, 'anchor': anchor, 'at_me': False, 'root_id': root_id, 'parent_id': v.get('parentId') or '', 'cid': v.get('cid') or '', 'position': v.get('position') or int(pos_key), 'create_time': v.get('createTime'), 'content': summary, 'content_data': data}
+            msg = decoders.message_dict(v, thread_chat=thread_chat, chat_id=chat_id)
+            msg['position'] = msg['position'] or int(pos_key)
             out.append(msg)
             if save_storage is not None:
                 try:

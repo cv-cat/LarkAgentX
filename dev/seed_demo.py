@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loguru import logger  # noqa: E402
 
-from larkx import accounts, profile  # noqa: E402
+from larkx import accounts, memory, profile  # noqa: E402
 from larkx.auth import LarkAuth  # noqa: E402
 from larkx.storage import Storage  # noqa: E402
 
@@ -43,6 +43,10 @@ def fake_avatar(account_id, kind, ident, filename):
     profile.write_cache(account_id, name, (AVATARS / filename).read_bytes(), ctype)
 
 
+PEOPLE = {'u_chen': ('陈思远', '会员中心 · 后端'), 'u_zhou': ('周雨桐', '会员中心 · 后端'), 'u_xu': ('许嘉禾', '数据平台'),
+          'u_song': ('宋以宁', '设计中心')}
+
+
 class DemoApi:
     """演示用的飞书客户端: 发消息只落库,不联网。"""
     def __init__(self, user_id):
@@ -58,6 +62,12 @@ class DemoApi:
 
     def get_chat_info(self, chat_id):
         return {'lastMessagePosition': 1}
+
+    def search(self, query):
+        return [{'type': 'user', 'id': uid, 'title': name, 'summary': dept} for uid, (name, dept) in PEOPLE.items() if query in name]
+
+    def get_user_name(self, user_id, chat_id):
+        return PEOPLE.get(user_id, ('', ''))[0]
 
     def close(self):
         pass
@@ -103,6 +113,18 @@ def seed_work(a):
 
     w = ('c_weekly', 2)
     m(*w, 'bot', '周报助手', '[卡片] 本周周报提交提醒:请在周五 18:00 前提交', 6 * H, '研发周报', mtype='CARD')
+
+    # 长期记忆、定时任务;Agent 发的消息在聊天记录里会标出来
+    accounts.update_meta(a, settings={'memory_enabled': True})     # 每日回顾用默认的 00:00
+    for text in ('陈思远：会员中心重构的后端负责人，喜欢先看结论再看细节',
+                 '会员中心重构群：每周五 16:00 发版，发版前在群里确认',
+                 '许嘉禾：要过导出脚本，之后可能还会再要',
+                 '我：周报每周五 18:00 前交'):
+        memory.add(a, text)
+    st.task_add('c_proj', '', 'daily', '汇总群里昨天没人回复的问题，发给我', run_at=NOW + 14 * H, daily_at='09:30', created_by='agent')
+    st.task_add('c_p2p', '', 'once', '提醒我把导出脚本发给许嘉禾', run_at=NOW + 2 * H, created_by='agent')
+    for mid in ('m5', 'm9'):
+        st.mark_agent_sent(mid, 'c_proj')
 
     st.session_upsert('c_proj:', 'c_proj', '', 'sess-1', True)
     st.session_upsert('c_p2p:', 'c_p2p', '', 'sess-2', True)

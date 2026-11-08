@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -11,7 +12,7 @@ from datetime import datetime
 
 from loguru import logger
 
-from .. import accounts, profile
+from .. import accounts, memory, profile, tasks
 from ..agent import get_backend
 from ..agent.backend import BACKENDS
 from ..auth import AuthExpired, LarkAuth
@@ -20,6 +21,14 @@ from ..listener import Listener
 from ..region import REGIONS, get_region
 from ..storage import Storage
 from .login import LoginFlow
+
+
+_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
+
+
+def _plain(text) -> str:
+    """搜索结果里的高亮标记去掉,只留文字。"""
+    return re.sub(r'<[^>]*>', '', str(text or '')).strip()
 
 
 class Conflict(Exception):
@@ -72,6 +81,8 @@ class Manager:
         self._avatar_miss = {}
         self._profile_tried = {}
         self._runtime_cache = {}
+        self._names = {}
+        self._loop = None
         self._sink_id = logger.add(self.logs.sink, level='INFO', format='{message}')
 
     # ---------- 账号 ----------
@@ -119,6 +130,7 @@ class Manager:
             'state': state,
             'error': error,
             'backend': settings['agent_backend'],
+            'memory': bool(settings['memory_enabled']),
             'queue': listener.stats() if listener else {'busy': 0, 'queued': 0},
             'login': login.snapshot() if login and not login.done else None,
         }
@@ -165,8 +177,10 @@ class Manager:
         self.refresh_profile(account_id, force=True)
 
     def _after_login(self, account_id: str):
-        """新凭证生效: 清掉基于旧凭证的一切。否则账号会一直停在「需要重新登录」,头像也要等重试时间过了才取。"""
+        """新凭证生效: 清掉基于旧凭证的一切。否则账号会一直停在「需要重新登录」,头像也要等重试时间过了才取。
+        账号是因为登录失效才停下的,就自动重新启动。"""
         listener = self.listeners.get(account_id)
+        resume = bool(listener and listener.state == 'login_required')
         if listener and not listener.active:
             self.listeners.pop(account_id, None)
         client = self.clients.pop(account_id, None)
@@ -176,6 +190,22 @@ class Manager:
         self._profile_tried.pop(account_id, None)
         for key in [k for k in self._avatar_miss if k[0] == account_id]:
             self._avatar_miss.pop(key, None)
+        if resume and self._loop:
+            asyncio.run_coroutine_threadsafe(self._resume(account_id), self._loop)
+
+    async def _resume(self, account_id: str):
+        # 扫码登录时,登录流程要等账号资料取完才算结束,结束前不能启动
+        for _ in range(300):
+            flow = self.logins.get(account_id)
+            if not flow or flow.done:
+                break
+            await asyncio.sleep(0.1)
+        log = logger.bind(account=account_id)
+        try:
+            await self.start(account_id)
+            log.info('重新登录成功，已自动恢复运行')
+        except Exception as e:
+            log.warning(f'重新登录后没能自动启动: {e}')
 
     def _drop_files(self, account_id: str):
         st = self.storages.pop(account_id, None)
@@ -208,6 +238,11 @@ class Manager:
             'mark_read': bool(cfg['mark_read']),
             'reply_in_topic': bool(cfg['reply_in_topic']),
             'reply_mode': cfg['reply_mode'],
+            'reply_signature': cfg['reply_signature'],
+            'ack_reaction': bool(cfg['ack_reaction']),
+            'deny_reply': cfg['deny_reply'],
+            'memory_enabled': bool(cfg['memory_enabled']),
+            'memory_review_at': cfg['memory_review_at'],
             'triggers': cfg['triggers'],
         }
 
@@ -267,6 +302,7 @@ class Manager:
 
     # ---------- 运行 ----------
     async def start(self, account_id: str) -> dict:
+        self._loop = asyncio.get_running_loop()
         account_id = self.require(account_id)
         existing = self.listeners.get(account_id)
         if existing and existing.active:
@@ -457,6 +493,82 @@ class Manager:
                 saved += 1
         return {'pulled': saved, 'at_start': start <= 1}
 
+    def people(self, account_id: str, query: str = '', ids=()) -> list:
+        """按名字搜人(往名单里加人用),或者按 id 取名字(显示名单里已有的人)。在线程里调。"""
+        account_id = self.require(account_id)
+        if query:
+            client = self.api_client(account_id)
+            out = []
+            for r in client.search(query) or []:
+                uid = str(r.get('id') or '')
+                if r.get('type') == 'user' and _ID.fullmatch(uid):
+                    out.append({'id': uid, 'name': _plain(r.get('title')), 'desc': _plain(r.get('summary'))})
+            return [{**p, 'avatar': f'/api/accounts/{account_id}/avatars/user/{p["id"]}'} for p in out[:20]]
+        ids = [str(i) for i in ids if _ID.fullmatch(str(i))][:200]
+        names = self.storage(account_id).sender_names(ids)
+        missing = [i for i in ids if not names.get(i) and not self._names.get((account_id, i))]
+        if missing:
+            try:
+                client = self.api_client(account_id)
+                for uid in missing[:30]:
+                    self._names[(account_id, uid)] = client.get_user_name(uid, '0') or ''
+            except Exception as e:
+                logger.bind(account=account_id).debug(f'查名字失败(只显示 id): {e}')
+        return [{'id': i, 'name': names.get(i) or self._names.get((account_id, i)) or '', 'desc': '',
+                 'avatar': f'/api/accounts/{account_id}/avatars/user/{i}'} for i in ids]
+
+    # ---------- 长期记忆、定时任务 ----------
+    def memory(self, account_id: str) -> dict:
+        account_id = self.require(account_id)
+        items = memory.entries(account_id)
+        return {'entries': items, 'used': memory.used(items), 'limit': memory.MEMORY_LIMIT,
+                'last_review': accounts.read_meta(account_id).get('memory_review_last') or ''}
+
+    def memory_change(self, account_id: str, action: str, n: int = 0, text: str = '') -> dict:
+        account_id = self.require(account_id)
+        try:
+            if action == 'add':
+                memory.add(account_id, text)
+            elif action == 'edit':
+                memory.edit(account_id, n, text)
+            else:
+                memory.remove(account_id, n)
+        except memory.MemoryEditError as e:
+            raise ValueError(str(e))
+        return self.memory(account_id)
+
+    def memory_review(self, account_id: str) -> dict:
+        """「立即回顾」。在线程里调(要等后台确认开始了没有)。"""
+        account_id = self.require(account_id)
+        cfg = accounts.get_settings(account_id)
+        if not cfg['memory_enabled']:
+            raise Conflict('长期记忆没有开启')
+        if cfg['agent_backend'] == 'none':
+            raise Conflict('没有接入 Agent，无法回顾')
+        listener = self.listeners.get(account_id)
+        result = listener.review_now() if listener else ''
+        if not result:
+            raise Conflict('账号运行中才能回顾，请先启动')
+        if result == 'empty':
+            raise Conflict('最近 24 小时没有聊天，不需要回顾')
+        if result == 'busy':
+            raise Conflict('上一次回顾还没结束')
+        return {'ok': True}
+
+    def tasks(self, account_id: str) -> list:
+        account_id = self.require(account_id)
+        st = self.storage(account_id)
+        names = {c.chat_id: c.name for c in st.list_chats(limit=1000)}
+        return [{'id': t.id, 'kind': t.kind, 'when': tasks.describe(t), 'next_run': t.run_at, 'chat_id': t.chat_id,
+                 'chat': names.get(t.chat_id) or t.chat_id, 'anchor': t.anchor, 'content': t.content, 'created_by': t.created_by}
+                for t in st.task_list()]
+
+    def remove_task(self, account_id: str, task_id: int) -> dict:
+        account_id = self.require(account_id)
+        if not self.storage(account_id).task_remove(task_id):
+            raise NotFound(f'没有这个定时任务: {task_id}')
+        return {'ok': True}
+
     # ---------- 数据 ----------
     def overview(self, account_id: str) -> dict:
         account_id = self.require(account_id)
@@ -503,13 +615,15 @@ class Manager:
     def chat_messages(self, account_id: str, chat_id: str, anchor: str = None, before: tuple = None, limit: int = 50) -> dict:
         account_id = self.require(account_id)
         limit = max(1, min(limit, 200))
-        rows, has_more = self.storage(account_id).chat_page(chat_id, anchor=anchor, before=before, limit=limit)
+        st = self.storage(account_id)
+        rows, has_more = st.chat_page(chat_id, anchor=anchor, before=before, limit=limit)
+        by_agent = st.agent_sent_ids(m.msg_id for m in rows if m.direction == 'out')
         return {
             'has_more': has_more,
             'messages': [{
                 'id': m.id, 'msg_id': m.msg_id, 'time': m.create_time, 'direction': m.direction,
                 'sender': m.sender_name or m.sender_id, 'sender_id': m.sender_id, 'type': m.msg_type_name,
-                'content': m.content or '', 'anchor': m.anchor or '',
+                'content': m.content or '', 'anchor': m.anchor or '', 'agent': m.msg_id in by_agent,
             } for m in rows],
         }
 

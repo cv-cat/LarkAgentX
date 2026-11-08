@@ -9,12 +9,14 @@ import { Accounts } from './Accounts'
 import { Chats } from './Chats'
 import { LoginPanel } from './Login'
 import { Logs } from './Logs'
+import { MemoryPage } from './Memory'
 import { Overview } from './Overview'
 import { SettingsPage } from './Settings'
 
 const TABS = [
   { id: 'overview', label: '概览' },
   { id: 'chats', label: '聊天记录' },
+  { id: 'memory', label: '记忆' },
   { id: 'settings', label: '设置' },
   { id: 'logs', label: '日志' },
 ] as const
@@ -97,8 +99,10 @@ function Shell({ path }: { path: string }) {
   }, [loaded, route.view, accounts, account])
 
   const base = account ? `/a/${encodeURIComponent(account.id)}` : ''
+  // 「记忆」只在开了长期记忆时出现
+  const tabs = TABS.filter((t) => t.id !== 'memory' || account?.memory || route.tab === 'memory')
   const nav = account && (
-    <NavPills items={TABS.map((t) => ({ label: t.label, to: `${base}/${t.id}`, active: route.tab === t.id }))} />
+    <NavPills items={tabs.map((t) => ({ label: t.label, to: `${base}/${t.id}`, active: route.tab === t.id }))} />
   )
 
   const finishAdd = async (id: string) => {
@@ -127,6 +131,7 @@ function Shell({ path }: { path: string }) {
   } else if (account) {
     if (route.tab === 'chats') page = <Chats key={account.id} account={account} chatId={route.chat} />
     else if (route.tab === 'settings') page = <SettingsPage key={account.id} account={account} />
+    else if (route.tab === 'memory') page = <MemoryPage key={account.id} account={account} />
     else if (route.tab === 'logs') page = <Logs key={account.id} account={account} />
     else page = <Overview key={account.id} account={account} />
   }

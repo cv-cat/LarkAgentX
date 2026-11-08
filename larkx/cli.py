@@ -1,6 +1,9 @@
 import argparse
 import asyncio
 import json
+import locale
+import os
+import re
 import sys
 from datetime import datetime
 from loguru import logger
@@ -10,6 +13,8 @@ from .client import LarkClient
 from .listener import Listener, ListenerError
 from .region import REGIONS, get_region
 from .storage import Storage
+
+_OPTION_LIKE = re.compile(r'--?[A-Za-z][A-Za-z0-9_-]*(=.*)?', re.S)
 
 
 def _print_json(obj):
@@ -152,16 +157,196 @@ def _interactive_login(account_id=None):
             raise SystemExit(1)
 
 
+def _is_agent() -> bool:
+    """这条命令是不是 agent 执行的(agent 子进程的环境里带 LARKX_AGENT=1,见 agent/backend.py)。"""
+    return os.environ.get('LARKX_AGENT') == '1'
+
+
+def _read_text(parts: list) -> str:
+    """命令行里的文字;只写一个 - 时从标准输入读(多行 markdown 用)。"""
+    if parts != ['-']:
+        return ' '.join(parts)
+    data = sys.stdin.buffer.read()
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors='replace')
+
+
+def _parse_mentions(client, chat_id: str, items: list) -> list:
+    """--mention 用户id:名字。没写名字就查一次。"""
+    out = []
+    for item in items:
+        uid, _, name = item.partition(':')
+        uid = uid.strip()
+        if not uid.isdigit():
+            raise ValueError(f'--mention 要写成 用户id:名字,「{item}」不对')
+        out.append({'user_id': uid, 'name': name.strip() or client.get_user_name(uid, chat_id) or uid})
+    return out
+
+
 def cmd_send(args):
+    from .media import UploadError, upload_file, upload_image
+    from .proto.compose import plain_markdown
+    text = _read_text(args.text)
+    if not text.strip() and not (args.image or args.file):
+        print('没有要发送的内容', file=sys.stderr)
+        return 1
     client = LarkClient(LarkAuth(args.account))
-    text = ' '.join(args.text)
-    msg_id = client.send_msg(text, args.chat_id, root_id=args.root, quote_id=args.quote)
-    if msg_id:
-        Storage(account_id=args.account).save_sent(msg_id, args.chat_id, text, client.auth.user_id, root_id=args.root)
+    st = Storage(account_id=args.account)
+    agent = _is_agent()
+    target = {'root_id': args.root, 'quote_id': args.quote}
+
+    def done(msg_id, content, msg_type, type_name) -> bool:
+        if not msg_id:
+            print('发送失败', file=sys.stderr)
+            return False
+        st.save_sent(msg_id, args.chat_id, content, client.auth.user_id, root_id=args.root, msg_type=msg_type, msg_type_name=type_name)
+        if agent:
+            st.mark_agent_sent(msg_id, args.chat_id)
         print(f'已发送 msg_id={msg_id}')
+        return True
+
+    if text.strip():
+        # 回复署名只加在 agent 发的消息上
+        sig = (accounts.get_settings(args.account).get('reply_signature') or '').strip() if agent else ''
+        if sig:
+            text = f'{text.rstrip()}\n\n{sig}'
+        try:
+            mentions = _parse_mentions(client, args.chat_id, args.mention)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 1
+        if args.markdown:
+            ok = done(client.send(args.chat_id, markdown=text, mentions=mentions, **target), plain_markdown(text), 2, 'POST')
+        else:
+            ok = done(client.send(args.chat_id, text=text, mentions=mentions, **target), text, 4, 'TEXT')
+        if not ok:
+            return 1
+    try:
+        for path in args.image:
+            key = upload_image(client.auth, path)
+            if not done(client.send(args.chat_id, image_key=key, **target), '[图片]', 5, 'IMAGE'):
+                return 1
+        for path in args.file:
+            info = upload_file(client.auth, path)
+            if not done(client.send(args.chat_id, file=info, **target), f'[文件] {info["name"]}', 3, 'FILE'):
+                return 1
+    except (OSError, UploadError) as e:
+        print(f'发送失败: {e}', file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_recall(args):
+    client = LarkClient(LarkAuth(args.account))
+    try:
+        client.recall(args.msg_id)
+    except Exception as e:
+        print(f'撤回失败(只能撤回自己发的消息,且有时间限制): {e}', file=sys.stderr)
+        return 1
+    Storage(account_id=args.account).mark_recalled(args.msg_id)
+    print(f'已撤回 msg_id={args.msg_id}')
+    return 0
+
+
+def cmd_forward(args):
+    client = LarkClient(LarkAuth(args.account))
+    try:
+        ids = client.forward(args.msg_id, args.to, merge=args.merge)
+    except Exception as e:
+        print(f'转发失败: {e}', file=sys.stderr)
+        return 1
+    if not ids:
+        print('转发失败: 服务端没有返回新消息的 id', file=sys.stderr)
+        return 1
+    st = Storage(account_id=args.account)
+    for msg_id in ids:
+        # 先按 id 落库,回显到了再补全内容;否则在「和自己的会话」里转发,回显会被当成你亲手发的
+        st.save_sent(msg_id, args.to, '[转发的消息]', client.auth.user_id)
+        if _is_agent():
+            st.mark_agent_sent(msg_id, args.to)
+        print(f'已转发 msg_id={msg_id}')
+    return 0
+
+
+def cmd_memory(args):
+    from . import memory
+    account_id = accounts.normalize(args.account)
+    try:
+        if args.action == 'add':
+            items = memory.add(account_id, ' '.join(args.args))
+        elif args.action == 'edit':
+            if len(args.args) < 2 or not args.args[0].isdigit():
+                print('用法: lark memory edit 编号 "新的内容"', file=sys.stderr)
+                return 1
+            items = memory.edit(account_id, int(args.args[0]), ' '.join(args.args[1:]))
+        elif args.action == 'rm':
+            if len(args.args) != 1 or not args.args[0].isdigit():
+                print('用法: lark memory rm 编号', file=sys.stderr)
+                return 1
+            items = memory.remove(account_id, int(args.args[0]))
+        else:
+            items = memory.entries(account_id)
+    except memory.MemoryEditError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    for i, e in enumerate(items, 1):
+        print(f'{i}. {e}')
+    if not items:
+        print('(还没有记忆)')
+    print(memory.usage_text(items))
+    return 0
+
+
+def cmd_task(args):
+    from . import tasks
+    st = Storage(account_id=args.account)
+    if args.action == 'rm':
+        if len(args.args) != 1 or not args.args[0].isdigit():
+            print('用法: lark task rm 编号', file=sys.stderr)
+            return 1
+        if not st.task_remove(int(args.args[0])):
+            print(f'没有编号 {args.args[0]} 的定时任务', file=sys.stderr)
+            return 1
+        print(f'已删除定时任务 #{args.args[0]}')
         return 0
-    print('发送失败', file=sys.stderr)
-    return 1
+    if args.action == 'add':
+        return _task_add(args, st, tasks)
+    rows = st.task_list()
+    for t in rows:
+        print(f'#{t.id}\t{tasks.describe(t)}\t{st.get_chat_name(t.chat_id) or t.chat_id}\t{t.content}')
+    if not rows:
+        print('(没有定时任务)')
+    return 0
+
+
+def _task_add(args, st, tasks) -> int:
+    content = ' '.join(args.args).strip()
+    # 在 agent 里执行时默认记到当前会话(环境变量由 agent/backend.py 传进来),到点后在这个会话里处理
+    chat_id = args.chat or os.environ.get('LARKX_CHAT_ID') or ''
+    anchor = args.root or ('' if args.chat else os.environ.get('LARKX_ANCHOR') or '')
+    if not content:
+        print('要写上到点后做什么,比如: lark task add --in 30m "提醒我交周报"', file=sys.stderr)
+        return 1
+    if not chat_id:
+        print('不知道到点后在哪个会话里处理,请用 --chat 指定会话 id', file=sys.stderr)
+        return 1
+    try:
+        if args.daily:
+            daily, kind = tasks.parse_hhmm(args.daily), 'daily'
+            run_at = tasks.next_daily(daily, datetime.now())
+        else:
+            daily, kind = '', 'once'
+            run_at = tasks.parse_in(args.in_) if args.in_ else tasks.parse_at(args.at)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    task_id = st.task_add(chat_id, anchor, kind, content, run_at=int(run_at.timestamp()), daily_at=daily,
+                          created_by='agent' if _is_agent() else 'user')
+    when = f'每天 {daily}' if daily else run_at.strftime('%Y-%m-%d %H:%M')
+    print(f'已添加定时任务 #{task_id}: {when} {content}')
+    return 0
 
 
 def cmd_config(args):
@@ -354,7 +539,7 @@ def cmd_web(args):
         return 1
     app = create_app(token=token, autostart=not args.no_autostart)
     url = f'http://{args.host}:{args.port}'
-    print(f'LarkAgentX: {url}' + (f'/?token={token}' if token else '') + f'  (控制台 {url}/console)', flush=True)
+    print(f'LarkAgentX: {url}' + (f'/#token={token}' if token else '') + f'  (控制台 {url}/console)', flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level='warning')
     return 0
 
@@ -371,18 +556,58 @@ def main():
     sub = parser.add_subparsers(dest='cmd', required=True)
     acct = argparse.ArgumentParser(add_help=False)
     acct.add_argument('--account', default=None, metavar='ID', help='账号 id(默认 default;账号在 lark web 里管理)')
+    # 子命令下面的子命令也认 --account;没写时不覆盖上一层已经解析到的值
+    sub_acct = argparse.ArgumentParser(add_help=False)
+    sub_acct.add_argument('--account', default=argparse.SUPPRESS, metavar='ID', help='账号 id')
     p = sub.add_parser('auth', parents=[acct], help='凭证管理')
     p.add_argument('action', choices=['status', 'import', 'check', 'qr'])
     p.add_argument('--cookie', help='直接传 cookie 串')
     p.add_argument('--file', help='从文件读 cookie')
     p.add_argument('--region', choices=list(REGIONS), help='qr/import 登录的区域: feishu=飞书(国内版) lark=Lark(国际版);默认沿用已有凭证,无凭证时取 LARKX_REGION')
     p.set_defaults(fn=cmd_auth)
-    p = sub.add_parser('send', parents=[acct], help='发送文本消息')
+    p = sub.add_parser('send', parents=[acct], help='发送消息(文字、markdown、图片、文件)')
     p.add_argument('chat_id')
-    p.add_argument('text', nargs='+')
+    p.add_argument('text', nargs='*', help='消息内容;只写 - 时从标准输入读')
     p.add_argument('--root', help='话题/线程根消息 id,回复进话题')
     p.add_argument('--quote', help='引用回复这条消息(留在主会话流)')
+    p.add_argument('-m', '--markdown', action='store_true', help='按 markdown 发富文本:代码块、列表、引用、标题、**加粗**、*斜体*、链接')
+    p.add_argument('--mention', action='append', default=[], metavar='USER_ID:NAME',
+                   help='真正 @ 某人,可重复。正文里写到的「@名字」就地变成 @,没写到的放在最前面')
+    p.add_argument('--image', action='append', default=[], metavar='PATH', help='发一张图片,可重复')
+    p.add_argument('--file', action='append', default=[], metavar='PATH', help='发一个文件,可重复')
     p.set_defaults(fn=cmd_send)
+    p = sub.add_parser('recall', parents=[acct], help='撤回一条自己发的消息')
+    p.add_argument('msg_id')
+    p.set_defaults(fn=cmd_recall)
+    p = sub.add_parser('forward', parents=[acct], help='转发消息到另一个会话')
+    p.add_argument('msg_id', nargs='+', help='要转发的消息 id,可以写几个,按顺序逐条转发')
+    p.add_argument('--to', required=True, metavar='CHAT_ID', help='转发到哪个会话')
+    p.add_argument('--merge', action='store_true', help='合并成一条聊天记录转发(消息要来自同一个会话)')
+    p.set_defaults(fn=cmd_forward)
+    p = sub.add_parser('memory', parents=[acct], help='长期记忆:查看、添加、修改、删除条目')
+    p.set_defaults(fn=cmd_memory, action='list', args=[])
+    msub = p.add_subparsers(dest='action')
+    msub.add_parser('list', parents=[sub_acct], help='查看全部条目')
+    q = msub.add_parser('add', parents=[sub_acct], help='添加一条')
+    q.add_argument('args', nargs='+', metavar='内容')
+    q = msub.add_parser('edit', parents=[sub_acct], help='修改第 N 条')
+    q.add_argument('args', nargs='+', metavar='编号 内容')
+    q = msub.add_parser('rm', parents=[sub_acct], help='删除第 N 条')
+    q.add_argument('args', nargs=1, metavar='编号')
+    p = sub.add_parser('task', parents=[acct], help='定时任务:到点后交给 agent 处理')
+    p.set_defaults(fn=cmd_task, action='list', args=[])
+    tsub = p.add_subparsers(dest='action')
+    tsub.add_parser('list', parents=[sub_acct], help='查看全部定时任务')
+    q = tsub.add_parser('add', parents=[sub_acct], help='添加定时任务')
+    q.add_argument('args', nargs='+', metavar='要做的事')
+    when = q.add_mutually_exclusive_group(required=True)
+    when.add_argument('--in', dest='in_', metavar='DURATION', help='多久之后执行一次,如 30m、2h、1d')
+    when.add_argument('--at', metavar='TIME', help='指定时间执行一次,如 "2026-11-09 09:00" 或 "09:00"')
+    when.add_argument('--daily', metavar='HH:MM', help='每天这个时间执行')
+    q.add_argument('--chat', help='到点后在哪个会话里处理(在 agent 里执行时默认是当前会话)')
+    q.add_argument('--root', help='话题 id(配合 --chat)')
+    q = tsub.add_parser('rm', parents=[sub_acct], help='删除定时任务')
+    q.add_argument('args', nargs=1, metavar='编号')
     p = sub.add_parser('config', parents=[acct], help='查看生效中的配置(配置项写在 .env 里)')
     p.set_defaults(fn=cmd_config)
     p = sub.add_parser('chats', parents=[acct], help='列出本地会话')
@@ -426,7 +651,17 @@ def main():
     p.add_argument('--token', default=None, help='访问令牌(也可用 LARKX_WEB_TOKEN)')
     p.add_argument('--no-autostart', action='store_true', help='不自动启动设置了「自启」的账号')
     p.set_defaults(fn=cmd_web)
-    args = parser.parse_args()
+    args, extra = parser.parse_known_args()
+    if extra:
+        # 消息内容是可变长的位置参数,写在选项后面时(lark send c1 -m "内容")argparse 会把它当成多余参数,这里接回去。
+        # 只有长得像选项名的(--foo、-x)才算写错;「- 列表项」「-5 度」这种是正文
+        target = {cmd_send: 'text', cmd_task: 'args', cmd_memory: 'args'}.get(getattr(args, 'fn', None))
+        if not target or any(_OPTION_LIKE.fullmatch(x) for x in extra):
+            parser.error('unrecognized arguments: ' + ' '.join(extra))
+        setattr(args, target, list(getattr(args, target) or []) + extra)
+    if hasattr(args, 'account') and not args.account:
+        # agent 里执行时,没写 --account 就用调起它的那个账号(见 agent/backend.py)
+        args.account = os.environ.get('LARKX_ACCOUNT') or None
     sys.exit(args.fn(args))
 
 

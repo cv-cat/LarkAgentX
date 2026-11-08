@@ -112,9 +112,9 @@ def decode_search_response(content: bytes):
         resp.ParseFromString(pkt.payload)
         for r in resp.results:
             if r.type == 1:
-                results.append({'type': 'user', 'id': r.id, 'title': r.titleHighlighted})
+                results.append({'type': 'user', 'id': r.id, 'title': r.titleHighlighted, 'summary': r.summaryHighlighted})
             elif r.type == 3:
-                results.append({'type': 'group', 'id': r.id, 'title': r.titleHighlighted})
+                results.append({'type': 'group', 'id': r.id, 'title': r.titleHighlighted, 'summary': r.summaryHighlighted})
     return results
 
 

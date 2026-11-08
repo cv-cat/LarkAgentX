@@ -48,3 +48,33 @@ class AgentSession(Base):
     msg_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.now)
     last_active = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
+class PendingMessage(Base):
+    """交给 agent、还没处理完的消息。处理完就删;重启后接着处理。"""
+    __tablename__ = 'pending_messages'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_key = Column(String(80), nullable=False)
+    payload = Column(Text, nullable=False)
+    created_at = Column(BigInteger, default=0)
+
+
+class Task(Base):
+    """定时任务。once: 到 run_at 执行一次;daily: 每天 daily_at(HH:MM)执行。到点后交给创建它的那个会话的 agent。"""
+    __tablename__ = 'tasks'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(String(32), nullable=False)
+    anchor = Column(String(32), default='')
+    kind = Column(String(8), nullable=False)
+    run_at = Column(BigInteger, default=0)
+    daily_at = Column(String(5), default='')
+    content = Column(Text, nullable=False)
+    created_by = Column(String(8), default='user')
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class AgentSent(Base):
+    """agent 发出的消息,聊天记录里据此标出来。"""
+    __tablename__ = 'agent_sent'
+    msg_id = Column(String(32), primary_key=True)
+    chat_id = Column(String(32), default='')
