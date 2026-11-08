@@ -5,8 +5,9 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Query
 from fastapi.responses import Response
 
-from .manager import Manager
-from .schemas import AccountCreate, AddAccount, ChatAgentIn, CookieLogin, HistoryIn, LoginStart, ResetIn, SendIn, SettingsIn
+from ..auth import AuthExpired
+from .manager import Manager, NotFound
+from .schemas import AccountCreate, AddAccount, ChatAgentIn, CookieLogin, HistoryIn, LoginStart, MemoryIn, ResetIn, SendIn, SettingsIn
 
 _CURSOR = re.compile(r'^(\d+)_(\d+)$')
 _IDENT = r'^[A-Za-z0-9_-]{1,64}$'
@@ -134,6 +135,44 @@ def build_router(mgr: Manager, auth_required: bool) -> APIRouter:
     @r.post('/accounts/{account_id}/chats/{chat_id}/reset')
     async def chat_reset(account_id: str, chat_id: str, body: ResetIn = None):
         return mgr.reset_session(account_id, chat_id, body.anchor if body else '')
+
+    @r.get('/accounts/{account_id}/people')
+    async def people(account_id: str, q: str = Query('', max_length=50), ids: str = Query('', max_length=4000)):
+        """q: 按名字搜人;ids: 逗号分隔的 user_id,取名字。"""
+        try:
+            return await asyncio.to_thread(mgr.people, account_id, q.strip(), [i for i in ids.split(',') if i])
+        except (AuthExpired, NotFound):
+            raise
+        except Exception as e:
+            raise ValueError(f'搜索失败: {e}')
+
+    @r.get('/accounts/{account_id}/memory')
+    async def get_memory(account_id: str):
+        return mgr.memory(account_id)
+
+    @r.post('/accounts/{account_id}/memory')
+    async def add_memory(account_id: str, body: MemoryIn):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'add', text=body.text)
+
+    @r.put('/accounts/{account_id}/memory/{n}')
+    async def edit_memory(account_id: str, n: int, body: MemoryIn):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'edit', n=n, text=body.text)
+
+    @r.delete('/accounts/{account_id}/memory/{n}')
+    async def remove_memory(account_id: str, n: int):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'rm', n=n)
+
+    @r.post('/accounts/{account_id}/memory/review')
+    async def review_memory(account_id: str):
+        return await asyncio.to_thread(mgr.memory_review, account_id)
+
+    @r.get('/accounts/{account_id}/tasks')
+    async def list_tasks(account_id: str):
+        return mgr.tasks(account_id)
+
+    @r.delete('/accounts/{account_id}/tasks/{task_id}')
+    async def remove_task(account_id: str, task_id: int):
+        return mgr.remove_task(account_id, task_id)
 
     @r.get('/accounts/{account_id}/logs')
     async def logs(account_id: str, since: int = 0):

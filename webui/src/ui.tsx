@@ -4,7 +4,7 @@ import {
   type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent, type ReactNode, type TextareaHTMLAttributes,
   forwardRef, useEffect, useRef, useState, useSyncExternalStore,
 } from 'react'
-import { type Account, type AccountState, withToken } from './api'
+import type { Account, AccountState } from './api'
 
 export const cn = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(' ')
 
@@ -101,7 +101,7 @@ const initial = (name: string) => {
 const AVATAR_SIZE = { xs: 'size-5 text-micro', sm: 'size-7 text-caption', md: 'size-8 text-small', lg: 'size-10 text-body', xl: 'size-14 text-title' }
 
 export function Avatar({ src, name, size = 'md', className }: { src?: string; name: string; size?: keyof typeof AVATAR_SIZE; className?: string }) {
-  const url = src ? withToken(src) : ''
+  const url = src || ''
   const [, bump] = useState(0)
   const failedAt = url ? broken.get(url) : undefined
   const waiting = failedAt !== undefined && Date.now() - failedAt < AVATAR_RETRY_MS

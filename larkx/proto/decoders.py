@@ -1,3 +1,7 @@
+import gzip
+import json
+import zlib
+
 from protobuf_to_dict import protobuf_to_dict
 from . import proto_pb2 as P
 MSG_TYPE_NAMES = {
@@ -51,48 +55,87 @@ def resolve_scope(msg_id: str, msg_type: int, chat_type: int, root_id: str, thre
     return ('chat', '')
 
 
+def _lark_all():
+    from . import gateway
+    return gateway._lark_all()
+
+
 def extract_rich_text(rich_text_dict):
-    TAG_PLACEHOLDERS = {2: '[图片]', 5: '[@]', 10: '[表情]', 18: '[视频]', 22: '[文档]'}
+    """把 richText 元素树展开成纯文本摘要。
+
+    富文本有两种布局: 老的扁平式(叶子直接挂在 elementIds 下)和树形(DOCS(22) 下挂段落 P、列表 UL/OL/LI、
+    引用、代码块等块级元素,文字在叶子里),都按 childIds 递归。块级元素之间补换行,列表项补「- 」或「n. 」,
+    代码块取代码内容,链接取地址(自定义文字的链接写成「文字(地址)」)。解码失败的元素用占位符。
+    """
+    TAG_PLACEHOLDERS = {2: '[图片]', 10: '[表情]', 18: '[视频]', 22: '[文档]'}
+    TEXT_TAGS = (1, 7, 8, 9, 17, 23, 24, 25, 44, 45, 46)
+    BLOCK_TAGS = (3, 26, 27, 28, 29, 31, 37, 23, 24, 25, 44, 45, 46)
+    AT, LINK, OL, LI, CODE, CODE_V2, PARA = 5, 6, 27, 28, 31, 37, 3
     text = ''
     try:
+        E = _lark_all().entities.RichTextElement
         dictionary = rich_text_dict['elements']['dictionary']
-        element_ids = rich_text_dict.get('elementIds') or []
-        if element_ids:
-            ordered = [(k, dictionary[k]) for k in element_ids if k in dictionary]
-            ordered += [(k, v) for k, v in dictionary.items() if k not in set(element_ids)]
-        else:
-            try:
-                ordered = sorted(dictionary.items(), key=lambda item: int(item[0]))
-            except Exception:
-                ordered = list(dictionary.items())
-        for k, v in ordered:
-            tag = v.get('tag', 1)
-            prop = v.get('property')
+
+        def leaf(tag, prop):
+            nonlocal text
             if not prop:
-                continue
-            if tag in (1, 3, 7, 8, 9, 17):
-                tp = P.TextProperty()
-                try:
-                    tp.ParseFromString(prop)
-                    text += tp.content
-                    if tag == 3:
-                        text += '\n'
-                    continue
-                except Exception:
-                    pass
-            if tag == 5:
-                ap = P.AtProperty()
-                try:
-                    ap.ParseFromString(prop)
-                    if ap.content:
-                        text += ap.content
-                        continue
-                except Exception:
-                    pass
-            text += TAG_PLACEHOLDERS.get(tag, '')
+                return
+            try:
+                if tag in TEXT_TAGS or tag == PARA:
+                    text += P.TextProperty.FromString(prop).content
+                elif tag == AT:
+                    text += P.AtProperty.FromString(prop).content or '[@]'
+                elif tag == LINK:
+                    # 现在的链接属性是 AnchorProperty;老消息是 LinkProperty(url)。只有自定义文字的链接才输出文字
+                    ap = E.AnchorProperty.FromString(prop)
+                    href = ap.href or E.LinkProperty.FromString(prop).url
+                    if href and (ap.isCustom or ap.scene) and ap.content and ap.content != href:
+                        text += f'{ap.content}({href})'
+                    else:
+                        text += href
+                elif tag == CODE:
+                    text += E.CodeBlockProperty.FromString(prop).content
+                elif tag == CODE_V2:
+                    for line in E.CodeBlockV2Property.FromString(prop).contents:
+                        text += ''.join(c.content for c in line.contents) + '\n'
+                else:
+                    text += TAG_PLACEHOLDERS.get(tag, '')
+            except Exception:
+                text += TAG_PLACEHOLDERS.get(tag, '')
+
+        seen = set()
+
+        def walk(key, ordered=False, index=0):
+            nonlocal text
+            if key in seen or not isinstance(dictionary.get(key), dict):
+                return
+            seen.add(key)
+            v = dictionary[key]
+            tag = enum_to_int(v.get('tag', 1))
+            children = v.get('childIds') or []
+            if tag == LI:
+                text += f'{index + 1}. ' if ordered else '- '
+            if children:
+                if tag in BLOCK_TAGS and tag != LI and text and not text.endswith('\n'):
+                    text += '\n'
+                for i, child in enumerate(children):
+                    walk(child, ordered=(tag == OL), index=i)
+                if tag in BLOCK_TAGS and not text.endswith('\n'):
+                    text += '\n'
+            else:
+                leaf(tag, v.get('property'))
+                if tag == PARA and not text.endswith('\n'):
+                    text += '\n'
+
+        roots = [k for k in rich_text_dict.get('elementIds') or [] if k in dictionary]
+        # 扁平布局或没挂到树上的元素:按 id 顺序补在后面
+        listed = set(roots)
+        roots += [k for k in sorted(dictionary, key=lambda x: int(x) if str(x).isdigit() else 0) if k not in listed]
+        for root in roots:
+            walk(root)
     except Exception:
         pass
-    return text
+    return text.strip()
 
 
 def decode_message_content(message_type, content_bytes):
@@ -237,30 +280,76 @@ def decode_message_content(message_type, content_bytes):
     return (f'[{MSG_TYPE_NAMES.get(message_type, message_type)}类型消息]', None)
 
 
+def frame_payload(frame) -> bytes:
+    """WS 帧里 Packet 的字节。连接时声明了 accept_encoding=gzip,服务端可以把推送压缩后再发,要先解压,
+    否则解不出 Packet,整条推送会被当成坏帧丢掉。"""
+    encoding = (frame.payloadEncoding or '').lower()
+    if encoding == 'gzip' or (not encoding and frame.payload[:2] == b'\x1f\x8b'):
+        return gzip.decompress(frame.payload)
+    if encoding in ('deflate', 'zlib'):
+        return zlib.decompress(frame.payload)
+    if encoding and encoding not in ('identity', 'pb'):
+        raise ValueError(f'不认识的 payloadEncoding: {encoding}')
+    return frame.payload
+
+
 def parse_ws_frame(raw: bytes):
+    """返回 (frame, packet) 两个 dict。payloadEncoding=json 的帧不是 Packet,packet 是 {'json': 内容},不带 sid 和 cmd。"""
     frame = P.Frame()
     frame.ParseFromString(raw)
     frame_d = protobuf_to_dict(frame)
+    if (frame.payloadEncoding or '').lower() == 'json':
+        return (frame_d, {'json': json.loads(frame.payload)})
     packet = P.Packet()
-    packet.ParseFromString(frame.payload)
+    packet.ParseFromString(frame_payload(frame))
     packet_d = protobuf_to_dict(packet)
     return (frame_d, packet_d)
 
 
+def push_sids(raw: bytes) -> list:
+    """PUSH_SID(cmd 6000)帧:服务端只推来 sid,完整的推送包要按 sid 再拉。返回要拉的 sid:包自己的 sid,
+    加上合并在一起推来的 compactedSids(proto_pb2.Packet 没有这个字段,按 improto.Packet 解)。"""
+    frame = P.Frame()
+    frame.ParseFromString(raw)
+    packet = _lark_all().improto.Packet.FromString(frame_payload(frame))
+    return list(dict.fromkeys(s for s in (packet.sid, *map(str, packet.compactedSids)) if s))
+
+
 def decode_push_messages(raw: bytes):
     _, packet = parse_ws_frame(raw)
-    out = []
-    if 'payload' not in packet:
-        return out
-    pmr = P.PushMessagesRequest()
-    pmr.ParseFromString(packet['payload'])
-    pmr_d = protobuf_to_dict(pmr)
+    return push_messages(packet.get('payload') or b'')
+
+
+def push_messages(payload: bytes):
+    """新消息推送(PushMessagesRequest)里的消息。"""
+    if not payload:
+        return []
+    pmr_d = protobuf_to_dict(P.PushMessagesRequest.FromString(payload))
     at_me_map = pmr_d.get('messagesAtMe') or {}
-    for k, v in (pmr_d.get('messages') or {}).items():
-        message_type = enum_to_int(v.get('type', 0))
-        chat_type = enum_to_int(v.get('chatType', 0))
-        summary, data = decode_message_content(message_type, v.get('content', b''))
-        root_id = v.get('rootId') or ''
-        scope, anchor = resolve_scope(v.get('id'), message_type, chat_type, root_id, v.get('threadId') or '')
-        out.append({'msg_id': v.get('id'), 'msg_type': message_type, 'msg_type_name': MSG_TYPE_NAMES.get(message_type, str(message_type)), 'from_id': v.get('fromId'), 'chat_id': v.get('chatId') or v.get('channelId'), 'chat_type': chat_type, 'chat_type_name': CHAT_TYPE_NAMES.get(chat_type, str(chat_type)), 'scope': scope, 'anchor': anchor, 'at_me': bool(at_me_map.get(v.get('id')) or at_me_map.get(k)), 'root_id': root_id, 'parent_id': v.get('parentId') or '', 'cid': v.get('cid') or '', 'position': v.get('position'), 'create_time': v.get('createTime'), 'content': summary, 'content_data': data})
-    return out
+    return [message_dict(v, at_me=bool(at_me_map.get(v.get('id')) or at_me_map.get(k)))
+            for k, v in (pmr_d.get('messages') or {}).items()]
+
+
+def message_dict(v: dict, at_me: bool = False, thread_chat: bool = False, chat_id: str = '') -> dict:
+    """消息实体(entities.Message 解成的 dict)转成入库、判断触发用的消息。推送、补拉、拉历史都用这一个。"""
+    message_type = enum_to_int(v.get('type', 0))
+    chat_type = enum_to_int(v.get('chatType', 0))
+    summary, data = decode_message_content(message_type, v.get('content', b''))
+    root_id = v.get('rootId') or ''
+    scope, anchor = resolve_scope(v.get('id'), message_type, chat_type, root_id, v.get('threadId') or '', thread_chat)
+    return {'msg_id': v.get('id'), 'msg_type': message_type, 'msg_type_name': MSG_TYPE_NAMES.get(message_type, str(message_type)),
+            'from_id': v.get('fromId'), 'chat_id': v.get('chatId') or v.get('channelId') or str(chat_id), 'chat_type': chat_type,
+            'chat_type_name': CHAT_TYPE_NAMES.get(chat_type, str(chat_type)), 'scope': scope, 'anchor': anchor, 'at_me': at_me,
+            'root_id': root_id, 'parent_id': v.get('parentId') or '', 'cid': v.get('cid') or '', 'position': v.get('position'),
+            'create_time': v.get('createTime'), 'content': summary, 'content_data': data}
+
+
+def batch_copy_messages(payload: bytes) -> tuple:
+    """逐条转发的推送(messages.PushBatchCopyMessages, cmd 134):返回 (这批消息的 id, 推送里直接带着的消息)。
+    推送里只有 messageIds、会话卡片和最后一条消息 lastMessage,别的要按 id 再拉。"""
+    p = _lark_all().messages.PushBatchCopyMessages.FromString(payload)
+    ids = list(dict.fromkeys(str(i) for i in p.messageIds if i))
+    last = p.lastMessage if p.HasField('lastMessage') and p.lastMessage.id else None
+    if last is None or (ids and last.id not in ids):
+        return ids, []
+    return ids or [last.id], [message_dict(protobuf_to_dict(last))]

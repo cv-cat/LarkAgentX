@@ -4,7 +4,7 @@ from sqlalchemy import and_, create_engine, desc, exists, func, or_
 from sqlalchemy.orm import aliased, sessionmaker
 from .. import accounts
 from ..config import load_config
-from .models import AgentSession, Base, Chat, Message
+from .models import AgentSent, AgentSession, Base, Chat, Message, PendingMessage, Task
 
 
 def _json_default(o):
@@ -41,9 +41,9 @@ class Storage:
     def close(self):
         self.engine.dispose()
 
-    def save_sent(self, msg_id: str, chat_id: str, text: str, user_id: str, root_id: str=None) -> bool:
+    def save_sent(self, msg_id: str, chat_id: str, text: str, user_id: str, root_id: str=None, msg_type: int=4, msg_type_name: str='TEXT') -> bool:
         """发送成功后用服务端 id 落库,监听收到回显时会补全这条而不是再插一条。"""
-        return self.save_message({'msg_id': msg_id, 'chat_id': chat_id, 'chat_type': 0, 'scope': 'topic' if root_id else 'chat', 'anchor': root_id or '', 'from_id': user_id, 'msg_type': 4, 'msg_type_name': 'TEXT', 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
+        return self.save_message({'msg_id': msg_id, 'chat_id': chat_id, 'chat_type': 0, 'scope': 'topic' if root_id else 'chat', 'anchor': root_id or '', 'from_id': user_id, 'msg_type': msg_type, 'msg_type_name': msg_type_name, 'content': text, 'create_time': int(datetime.now().timestamp())}, sender_name='我', direction='out')
 
     def message_exists(self, msg_id: str, chat_id: str) -> bool:
         s = self.Session()
@@ -264,5 +264,163 @@ class Storage:
         s = self.Session()
         try:
             return s.query(AgentSession).order_by(desc(AgentSession.last_active)).limit(limit).all()
+        finally:
+            s.close()
+
+    # ---- 交给 agent 还没处理完的消息 ----
+    def pending_add(self, session_key: str, payload: dict) -> int:
+        s = self.Session()
+        try:
+            row = PendingMessage(session_key=session_key, payload=json.dumps(payload, ensure_ascii=False, default=_json_default),
+                                 created_at=int(datetime.now().timestamp()))
+            s.add(row)
+            s.commit()
+            return row.id
+        finally:
+            s.close()
+
+    def pending_done(self, pending_id: int):
+        s = self.Session()
+        try:
+            s.query(PendingMessage).filter(PendingMessage.id == pending_id).delete()
+            s.commit()
+        finally:
+            s.close()
+
+    def pending_clear(self, session_key: str = None):
+        s = self.Session()
+        try:
+            q = s.query(PendingMessage)
+            if session_key is not None:
+                q = q.filter(PendingMessage.session_key == session_key)
+            q.delete()
+            s.commit()
+        finally:
+            s.close()
+
+    def pending_all(self) -> list:
+        """[(id, session_key, payload, created_at)],按先后顺序。"""
+        s = self.Session()
+        try:
+            rows = s.query(PendingMessage).order_by(PendingMessage.id).all()
+            return [(r.id, r.session_key, json.loads(r.payload), r.created_at) for r in rows]
+        finally:
+            s.close()
+
+    # ---- 定时任务 ----
+    def task_add(self, chat_id: str, anchor: str, kind: str, content: str, run_at: int = 0, daily_at: str = '', created_by: str = 'user') -> int:
+        s = self.Session()
+        try:
+            row = Task(chat_id=str(chat_id), anchor=anchor or '', kind=kind, run_at=int(run_at), daily_at=daily_at, content=content, created_by=created_by)
+            s.add(row)
+            s.commit()
+            return row.id
+        finally:
+            s.close()
+
+    def task_list(self) -> list:
+        s = self.Session()
+        try:
+            return s.query(Task).order_by(Task.run_at, Task.id).all()
+        finally:
+            s.close()
+
+    def task_remove(self, task_id: int) -> bool:
+        s = self.Session()
+        try:
+            n = s.query(Task).filter(Task.id == int(task_id)).delete()
+            s.commit()
+            return n > 0
+        finally:
+            s.close()
+
+    def task_reschedule(self, task_id: int, run_at: int):
+        s = self.Session()
+        try:
+            s.query(Task).filter(Task.id == int(task_id)).update({'run_at': int(run_at)})
+            s.commit()
+        finally:
+            s.close()
+
+    def sender_names(self, user_ids) -> dict:
+        """这些人在本地消息里出现过的名字 {user_id: name}。"""
+        user_ids = [str(u) for u in user_ids]
+        if not user_ids:
+            return {}
+        s = self.Session()
+        try:
+            rows = (s.query(Message.sender_id, Message.sender_name)
+                    .filter(Message.sender_id.in_(user_ids), Message.sender_name != '', Message.sender_name != '我').all())
+            return {uid: name for uid, name in rows}
+        finally:
+            s.close()
+
+    def mark_recalled(self, msg_id: str):
+        """撤回后本地也标一下,聊天记录里不再显示原文。"""
+        s = self.Session()
+        try:
+            s.query(Message).filter(Message.msg_id == str(msg_id)).update({'content': '[已撤回]'})
+            s.commit()
+        finally:
+            s.close()
+
+    # ---- agent 发出的消息 ----
+    def mark_agent_sent(self, msg_id: str, chat_id: str):
+        s = self.Session()
+        try:
+            if not s.get(AgentSent, str(msg_id)):
+                s.add(AgentSent(msg_id=str(msg_id), chat_id=str(chat_id)))
+                s.commit()
+        finally:
+            s.close()
+
+    def agent_sent_ids(self, msg_ids) -> set:
+        msg_ids = [str(m) for m in msg_ids if m]
+        if not msg_ids:
+            return set()
+        s = self.Session()
+        try:
+            return {r.msg_id for r in s.query(AgentSent.msg_id).filter(AgentSent.msg_id.in_(msg_ids)).all()}
+        finally:
+            s.close()
+
+    # ---- 补收 ----
+    def catchup_range(self, chat_id: str, before_ts: int) -> tuple:
+        """补收用: (起点, 起点之后本地已有的 position 集合)。起点是 before_ts 之前本地最后一条消息的 position,没有就是 0。
+        只按 before_ts 之前的消息定起点: 长连接后来推到的新消息不会把中间漏掉的那段跳过去。"""
+        s = self.Session()
+        try:
+            base = (s.query(func.max(Message.position))
+                    .filter(Message.chat_id == str(chat_id), Message.position > 0, Message.create_time < int(before_ts)).scalar() or 0)
+            have = {p for (p,) in s.query(Message.position).filter(Message.chat_id == str(chat_id), Message.position > base)}
+            return base, have
+        finally:
+            s.close()
+
+    def latest_message_time(self) -> int:
+        s = self.Session()
+        try:
+            return int(s.query(func.max(Message.create_time)).filter(Message.position > 0).scalar() or 0)
+        finally:
+            s.close()
+
+    def last_out_content(self, chat_id: str) -> str:
+        """这个会话里最近一条我发出的消息内容。"""
+        s = self.Session()
+        try:
+            row = (s.query(Message.content).filter(Message.chat_id == str(chat_id), Message.direction == 'out')
+                   .order_by(desc(Message.create_time), desc(Message.id)).first())
+            return (row[0] or '').strip() if row else ''
+        finally:
+            s.close()
+
+    def messages_since(self, since_ts: int, limit: int = 500) -> list:
+        """since_ts 之后的消息(按时间正序,最多 limit 条,取最新的那些)。每日回顾用。"""
+        s = self.Session()
+        try:
+            rows = (_without_echo_twins(s.query(Message)).filter(Message.create_time >= int(since_ts))
+                    .order_by(desc(Message.create_time), desc(Message.id)).limit(limit).all())
+            rows.reverse()
+            return rows
         finally:
             s.close()

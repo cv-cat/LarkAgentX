@@ -1,7 +1,7 @@
 import { Moon, Sun } from 'lucide-react'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react'
-import { type Account, type Meta, TokenRequired, api, onUnauthorized, setToken } from './api'
-import { Button, Dialog, Input, btn, cn, usePoll } from './ui'
+import { type Account, type Meta, TokenRequired, api, login, onUnauthorized } from './api'
+import { Button, Dialog, Input, attempt, btn, cn, usePoll } from './ui'
 
 // ---------- 主题 ----------
 function currentTheme(): 'light' | 'dark' {
@@ -68,8 +68,10 @@ export function ConsoleProvider({ children }: { children: ReactNode }) {
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            setToken(tokenDraft.trim())
-            location.reload()
+            void attempt(async () => {
+              await login(tokenDraft.trim())
+              location.reload()
+            })
           }}
         >
           <Input type="password" value={tokenDraft} onChange={(e) => setTokenDraft(e.target.value)} placeholder="访问令牌" autoFocus />

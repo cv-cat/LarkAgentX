@@ -1,9 +1,9 @@
-import { ChevronRight, Trash2 } from 'lucide-react'
-import { type ReactNode, useEffect, useState } from 'react'
-import { type Account, type Runtime, type Settings, type Triggers, api, enc } from '../api'
-import { navigate } from '../router'
+import { ArrowRight, ChevronRight, Trash2, X } from 'lucide-react'
+import { type KeyboardEvent, type ReactNode, useEffect, useState } from 'react'
+import { type Account, type Person, type Runtime, type Settings, type Triggers, api, enc } from '../api'
+import { Link, navigate } from '../router'
 import { useConsole } from '../store'
-import { AccountAvatar, Button, Card, Confirm, Field, Input, Seg, SwitchRow, TagInput, Textarea, attempt, cn, toast } from '../ui'
+import { AccountAvatar, Avatar, Button, Card, Confirm, Field, Input, Seg, SwitchRow, TagInput, Textarea, attempt, cn, toast } from '../ui'
 import { deleteHint } from './Accounts'
 
 const SECTIONS = [
@@ -11,8 +11,110 @@ const SECTIONS = [
   { id: 'agent', label: 'Agent' },
   { id: 'reply', label: '回复方式' },
   { id: 'triggers', label: '触发规则' },
+  { id: 'memory', label: '长期记忆' },
   { id: 'danger', label: '危险操作' },
 ]
+
+/** 名单里的人: 按名字搜索添加,显示头像和名字;也可以直接粘贴 user_id 回车 */
+function PeopleInput({ accountId, value, onChange }: { accountId: string; value: string[]; onChange: (v: string[]) => void }) {
+  const [names, setNames] = useState<Record<string, Person>>({})
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState<Person[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const base = `/accounts/${enc(accountId)}/people`
+  const remember = (ps: Person[]) => setNames((cur) => ({ ...cur, ...Object.fromEntries(ps.map((p) => [p.id, p])) }))
+
+  useEffect(() => {
+    const missing = value.filter((id) => !names[id])
+    if (missing.length) api<Person[]>('GET', `${base}?ids=${enc(missing.join(','))}`).then(remember).catch(() => undefined)
+  }, [value.join(','), base])
+
+  useEffect(() => {
+    const text = q.trim()
+    if (!text || /^\d+$/.test(text)) {
+      setResults(null)
+      return
+    }
+    const t = setTimeout(() => {
+      setBusy(true)
+      api<Person[]>('GET', `${base}?q=${enc(text)}`)
+        .then(setResults)
+        .catch((e: Error) => {
+          setResults([])
+          toast(e.message, true)
+        })
+        .finally(() => setBusy(false))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [q, base])
+
+  const add = (p: Person) => {
+    remember([p])
+    if (!value.includes(p.id)) onChange([...value, p.id])
+    setQ('')
+    setResults(null)
+  }
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return
+    const text = q.trim()
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (/^\d+$/.test(text)) add({ id: text, name: '', desc: '', avatar: '' })
+      else if (results?.length) add(results[0]!)
+    } else if (e.key === 'Backspace' && !q && value.length) {
+      onChange(value.slice(0, -1))
+    } else if (e.key === 'Escape') {
+      setResults(null)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-sm bg-fill-2 px-2 py-1.5 ring-1 ring-transparent ring-inset transition-shadow focus-within:bg-transparent focus-within:ring-accent-ring">
+        {value.map((id) => {
+          const name = names[id]?.name || id
+          return (
+            <span key={id} title={`user_id ${id}`} className="inline-flex h-6 items-center gap-1 rounded-full bg-surface-3 pr-1 pl-0.5 text-caption shadow-raised dark:bg-fill-3">
+              <Avatar src={`/api/accounts/${enc(accountId)}/avatars/user/${id}`} name={name} size="xs" />
+              <span className="max-w-32 truncate">{name}</span>
+              <button type="button" aria-label={`移除 ${name}`} className="press grid size-4 place-items-center rounded-full text-fg-3 hover:bg-fill-3 hover:text-fg-1" onClick={() => onChange(value.filter((x) => x !== id))}>
+                <X className="size-3" />
+              </button>
+            </span>
+          )
+        })}
+        <input
+          value={q}
+          autoComplete="off"
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={onKey}
+          onBlur={() => setResults(null)}
+          placeholder={value.length ? '' : '输入名字搜索'}
+          className="h-6 min-w-24 flex-1 bg-transparent px-1 text-small outline-none placeholder:text-fg-4"
+        />
+      </div>
+      {results !== null && (
+        <div className="menu-panel absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md p-1">
+          {results.length ? results.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => add(p)}
+              className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left text-small hover:bg-fill-2"
+            >
+              <Avatar src={p.avatar} name={p.name} size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{p.name || p.id}</span>
+                <span className="block truncate text-caption text-fg-3">{[p.desc, p.id].filter(Boolean).join(' · ')}</span>
+              </span>
+            </button>
+          )) : <div className="px-2 py-2 text-small text-fg-3">{busy ? '正在搜索…' : '没有找到'}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function Section({ id, title, note, children }: { id: string; title: string; note?: string; children: ReactNode }) {
   return (
@@ -136,9 +238,9 @@ export function SettingsPage({ account: a }: { account: Account }) {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="模型（可选）"><Input value={s.agent_model} onChange={(e) => set('agent_model', e.target.value)} placeholder="留空用 CLI 默认" /></Field>
-                <Field label="单次超时（可选）">
+                <Field label="单次超时（可选）" hint="超过这个时间还没处理完，就结束这次处理。留空表示不限。">
                   <div className="relative">
-                    <Input type="number" min={0} max={3600} value={s.agent_timeout || ''} onChange={(e) => set('agent_timeout', parseInt(e.target.value, 10) || 0)} placeholder="不限" className="pr-8" />
+                    <Input type="number" min={0} max={86400} value={s.agent_timeout || ''} onChange={(e) => set('agent_timeout', parseInt(e.target.value, 10) || 0)} placeholder="不限" className="pr-8" />
                     <span className="absolute top-1/2 right-3 -translate-y-1/2 text-caption text-fg-3">秒</span>
                   </div>
                 </Field>
@@ -176,6 +278,17 @@ export function SettingsPage({ account: a }: { account: Account }) {
                 />
                 <SwitchRow title="群聊中只处理 @我 的消息" checked={s.triggers.group_at_only} onChange={(v) => trig('group_at_only', v)} />
                 <SwitchRow title="处理后标记已读" hint="同步清除手机端的未读角标。" checked={s.mark_read} onChange={(v) => set('mark_read', v)} />
+                <SwitchRow
+                  title="收到消息先点个 👌"
+                  hint="交给 Agent 处理的消息会先加一个 OK 表情。对方会看到这条消息已读，撤掉表情也不会恢复成未读。"
+                  checked={s.ack_reaction}
+                  onChange={(v) => set('ack_reaction', v)}
+                />
+                <div className="py-3">
+                  <Field label="回复署名（可选）" hint="加在 Agent 发出的每条消息末尾。你自己发的消息不加。">
+                    <Input value={s.reply_signature} maxLength={100} onChange={(e) => set('reply_signature', e.target.value)} placeholder="例如：—— 🤖 数字分身" />
+                  </Field>
+                </div>
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
                   <div className="min-w-0">
                     <div className="text-body font-medium">话题内的消息</div>
@@ -228,16 +341,54 @@ export function SettingsPage({ account: a }: { account: Account }) {
                     </div>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    {([['include_chats', '只处理这些会话 ID'], ['exclude_chats', '忽略这些会话 ID'], ['include_senders', '只处理这些发送者 ID'], ['exclude_senders', '忽略这些发送者 ID']] as const).map(([k, l]) => (
+                    {([['include_chats', '只处理这些会话 ID'], ['exclude_chats', '忽略这些会话 ID']] as const).map(([k, l]) => (
                       <div key={k} className="flex flex-col gap-1.5">
                         <span className="text-small font-medium">{l}</span>
                         <TagInput value={s.triggers[k]} onChange={(v) => trig(k, v)} />
                       </div>
                     ))}
+                    {([['include_senders', '只处理这些发送者'], ['exclude_senders', '忽略这些发送者']] as const).map(([k, l]) => (
+                      <div key={k} className="flex flex-col gap-1.5">
+                        <span className="text-small font-medium">{l}</span>
+                        <PeopleInput accountId={a.id} value={s.triggers[k]} onChange={(v) => trig(k, v)} />
+                      </div>
+                    ))}
                   </div>
+                  {s.triggers.include_senders.length > 0 && (
+                    <Field label="名单外的人触发时回复（可选）" hint="不在「只处理这些发送者」里的人触发 Agent 时，自动回这句话。留空则不回复。">
+                      <Input value={s.deny_reply} maxLength={500} onChange={(e) => set('deny_reply', e.target.value)} placeholder="例如：抱歉，这个助手只为部分同事服务。" />
+                    </Field>
+                  )}
                   <p className="text-caption text-fg-3">单个会话的开关位于聊天记录页右上角，与此处名单同步。</p>
                 </div>
               )}
+            </Card>
+          </Section>
+
+          <Section id="memory" title="长期记忆" note="Agent 用 lark memory 记下长期有用的信息，比如人物、偏好和约定。所有会话共用，最多 2000 字。">
+            <Card className="px-5 py-2">
+              <div className="divide-y divide-line-1">
+                <SwitchRow
+                  title="开启长期记忆"
+                  hint="开启后，交给 Agent 的消息会带上记忆。"
+                  checked={s.memory_enabled}
+                  onChange={(v) => set('memory_enabled', v)}
+                />
+                {s.memory_enabled && (
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-body font-medium">每日回顾</div>
+                      <div className="text-caption text-fg-3">到点后把最近 24 小时的聊天（最多 500 条）交给 Agent 整理记忆，聊天内容会发给模型。账号没在运行时跳过。留空则不回顾。</div>
+                    </div>
+                    <Input type="time" value={s.memory_review_at} onChange={(e) => set('memory_review_at', e.target.value)} className="w-32" />
+                  </div>
+                )}
+                <div className="py-3">
+                  <Link to={`/a/${enc(a.id)}/memory`} className="inline-flex items-center gap-1 text-small text-fg-3 no-underline hover:text-fg-1">
+                    查看和修改记忆 <ArrowRight className="size-3.5" />
+                  </Link>
+                </div>
+              </div>
             </Card>
           </Section>
 

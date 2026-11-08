@@ -4,7 +4,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# 测试里设 LARKX_NO_DOTENV=1,不读本机的 .env,免得本地配置影响测试结果
+if not os.environ.get('LARKX_NO_DOTENV'):
+    load_dotenv()
 
 _home_env = os.environ.get("LARKX_HOME") or str(Path.home() / ".larkx")
 DATA_DIR = Path(os.path.expanduser(_home_env))
@@ -18,11 +20,16 @@ DEFAULTS = {
     "agent_backend": "claude",
     "agent_model": "",
     "workdir": "",
-    "agent_timeout": 0,
+    "agent_timeout": 7200,
     "system_prompt": "",
     "mark_read": True,
     "reply_in_topic": True,
     "reply_mode": "direct",
+    "reply_signature": "",
+    "ack_reaction": False,
+    "deny_reply": "",
+    "memory_enabled": False,
+    "memory_review_at": "00:00",
     "triggers": {
         "prefix": "",
         "chat_types": [],
@@ -38,7 +45,8 @@ DEFAULTS = {
 }
 
 # 可以按账号覆盖(web 里设置)的配置项
-SETTING_KEYS = ("agent_backend", "agent_model", "workdir", "agent_timeout", "system_prompt", "context_scope", "mark_read", "reply_in_topic", "reply_mode", "triggers")
+SETTING_KEYS = ("agent_backend", "agent_model", "workdir", "agent_timeout", "system_prompt", "context_scope", "mark_read", "reply_in_topic",
+                "reply_mode", "reply_signature", "ack_reaction", "deny_reply", "memory_enabled", "memory_review_at", "triggers")
 
 TRIGGER_ENV = {
     "prefix": "LARKX_TRIGGER_PREFIX",
@@ -84,7 +92,7 @@ def load_config(overrides: dict = None) -> dict:
         v = os.environ.get("LARKX_" + key.upper())
         if v:
             cfg[key] = v
-    for flag in ("mark_read", "reply_in_topic"):
+    for flag in ("mark_read", "reply_in_topic", "ack_reaction", "memory_enabled"):
         if isinstance(cfg.get(flag), str):
             cfg[flag] = _as_bool(cfg[flag])
     triggers = dict(DEFAULTS["triggers"])

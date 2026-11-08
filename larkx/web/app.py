@@ -2,7 +2,8 @@
 
 安全模型: 控制台能启动 agent(= 在本机执行命令)并管理登录凭证,等同本机 shell 权限。
 - 默认只监听 127.0.0.1;监听非本机地址必须设令牌(见 cli.cmd_web)
-- 配了令牌就所有 /api 都要带(Authorization: Bearer / X-Token / ?token=)
+- 配了令牌就所有 /api 都要带。网页先 POST /api/login 换一个 HttpOnly cookie,之后靠 cookie,
+  令牌不出现在网址里(不进代理日志和 Referer);脚本可以用 Authorization: Bearer / X-Token
 - 校验 Host 头防 DNS rebinding;写操作校验 Origin 防跨站请求(CSRF)
 """
 import hmac
@@ -19,9 +20,12 @@ from fastapi.staticfiles import StaticFiles
 from ..auth import AuthExpired
 from .manager import Conflict, Manager, NotFound
 from .routes import build_router
+from .schemas import LoginIn
 
 STATIC_DIR = Path(__file__).parent / 'static'
 LOOPBACK_NAMES = {'localhost', '127.0.0.1', '::1'}
+TOKEN_COOKIE = 'larkx_token'
+TOKEN_COOKIE_AGE = 180 * 86400
 
 
 def resolve_token(cli_token: str = None) -> str:
@@ -48,7 +52,11 @@ def _bearer(request: Request) -> str:
     auth = request.headers.get('authorization', '')
     if auth.lower().startswith('bearer '):
         return auth[7:].strip()
-    return request.headers.get('x-token') or request.query_params.get('token') or ''
+    return request.headers.get('x-token') or request.cookies.get(TOKEN_COOKIE) or ''
+
+
+def _same(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode('utf-8'), b.encode('utf-8'))
 
 
 def create_app(token: str = '', autostart: bool = True, manager: Manager = None) -> FastAPI:
@@ -71,7 +79,7 @@ def create_app(token: str = '', autostart: bool = True, manager: Manager = None)
         if not token and host not in LOOPBACK_NAMES and not is_loopback(host):
             return JSONResponse({'detail': 'Host 不允许;监听非本机地址请设置 --token'}, status_code=403)
         if request.url.path.startswith('/api'):
-            if token and not hmac.compare_digest(_bearer(request), token):
+            if token and request.url.path != '/api/login' and not _same(_bearer(request), token):
                 return JSONResponse({'detail': '需要访问令牌'}, status_code=401)
             if request.method not in ('GET', 'HEAD', 'OPTIONS'):
                 origin = request.headers.get('origin')
@@ -94,6 +102,18 @@ def create_app(token: str = '', autostart: bool = True, manager: Manager = None)
     @app.exception_handler(ValueError)
     async def _bad_value(request, exc):
         return JSONResponse({'detail': str(exc)}, status_code=400)
+
+    @app.post('/api/login', include_in_schema=False)
+    async def login(body: LoginIn, request: Request):
+        """用访问令牌换 cookie。没配令牌时直接成功。"""
+        if not token:
+            return {'ok': True}
+        if not _same(body.token.strip(), token):
+            return JSONResponse({'detail': '访问令牌不对'}, status_code=401)
+        resp = JSONResponse({'ok': True})
+        https = request.url.scheme == 'https' or request.headers.get('x-forwarded-proto') == 'https'
+        resp.set_cookie(TOKEN_COOKIE, token, max_age=TOKEN_COOKIE_AGE, httponly=True, samesite='strict', secure=https, path='/')
+        return resp
 
     app.include_router(build_router(mgr, bool(token)), prefix='/api')
 

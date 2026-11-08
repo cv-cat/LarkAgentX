@@ -1,6 +1,6 @@
-import { AlertCircle, ArrowRight, Play, RotateCw, Square } from 'lucide-react'
+import { AlertCircle, ArrowRight, Play, RotateCw, Square, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { type Account, type Overview as OverviewData, api, enc } from '../api'
+import { type Account, type Overview as OverviewData, type Task, api, enc } from '../api'
 import { Link, navigate } from '../router'
 import { useConsole } from '../store'
 import { AccountAvatar, Avatar, Button, Card, Dialog, Empty, StateBadge, Tag, attempt, cn, fmtTime, isActive, toast, typeLabel, usePoll } from '../ui'
@@ -60,6 +60,42 @@ function WeekChart({ days }: { days: OverviewData['days'] }) {
         <thead><tr><th>日期</th><th>收到</th><th>发出</th></tr></thead>
         <tbody>{days.map((d) => <tr key={d.date}><td>{d.date}</td><td>{d.in}</td><td>{d.out}</td></tr>)}</tbody>
       </table>
+    </Card>
+  )
+}
+
+/** 定时任务: agent 或 lark task add 创建,到点后交给创建它的那个会话处理 */
+function Tasks({ account: a }: { account: Account }) {
+  const [tasks, setTasks] = useState<Task[] | null>(null)
+  const base = `/accounts/${enc(a.id)}/tasks`
+  const load = () => api<Task[]>('GET', base).then(setTasks).catch(() => undefined)
+  useEffect(() => void load(), [a.id])
+  usePoll(() => void load(), 10000)
+  const remove = (t: Task) => attempt(async () => {
+    await api('DELETE', `${base}/${t.id}`)
+    await load()
+    toast('已删除定时任务')
+  })
+  return (
+    <Card>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 px-5 pt-4 pb-2">
+        <h2 className="text-body font-medium">定时任务</h2>
+        <span className="text-caption text-fg-3">账号运行时才会执行</span>
+      </div>
+      {tasks && !tasks.length ? (
+        <p className="px-5 pb-4 text-small text-fg-3">还没有定时任务。可以在飞书里让 Agent 安排，比如「30 分钟后提醒我交周报」，也可以用 lark task add 创建。</p>
+      ) : (
+        <ul className="pb-2">
+          {tasks?.map((t) => (
+            <li key={t.id} className="flex items-center gap-3 px-5 py-2">
+              <span className="tabular w-32 shrink-0 text-small text-fg-2">{t.when}</span>
+              <span className="min-w-0 flex-1 truncate text-small">{t.content}</span>
+              <Tag className="hidden max-w-32 truncate md:inline-flex">{t.chat}</Tag>
+              <Button size="icon-sm" variant="ghost" aria-label="删除这个定时任务" onClick={() => remove(t)}><Trash2 /></Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   )
 }
@@ -134,6 +170,8 @@ export function Overview({ account: a }: { account: Account }) {
         ) : <Card className="h-[92px] animate-pulse" />}
 
         {data ? <WeekChart days={data.days} /> : <Card className="h-[230px] animate-pulse" />}
+
+        <Tasks account={a} />
 
         <Card>
           <div className="flex items-center justify-between px-5 pt-4 pb-2">

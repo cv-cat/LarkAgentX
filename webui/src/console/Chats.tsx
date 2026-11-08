@@ -75,7 +75,7 @@ export function Chats({ account: a, chatId }: { account: Account; chatId: string
 }
 
 const sameBlock = (a: Message | undefined, b: Message) =>
-  !!a && a.direction === b.direction && a.sender_id === b.sender_id && b.time - a.time < 300 && fmtDay(a.time) === fmtDay(b.time)
+  !!a && a.direction === b.direction && a.sender_id === b.sender_id && a.agent === b.agent && b.time - a.time < 300 && fmtDay(a.time) === fmtDay(b.time)
 
 const isMedia = (m: Message) => !m.content || (m.type !== 'TEXT' && m.type !== 'POST' && /^\[/.test(m.content))
 
@@ -254,6 +254,7 @@ function Thread({ account: a, chatId, chat, onChanged }: { account: Account; cha
                   )}
                   <div className={cn('flex max-w-[78%] min-w-0 flex-col', out && 'items-end')}>
                     {!grouped && !out && <span className="mb-1 text-caption text-fg-3">{m.sender}</span>}
+                    {!grouped && out && m.agent && <span className="mb-1 text-caption text-fg-3">Agent</span>}
                     <Tip label={fmtTime(m.time)}>
                       <div className={cn('rounded-md px-3 py-2 text-body break-words whitespace-pre-wrap', out ? 'bg-accent-soft' : 'bg-fill-2', isMedia(m) && 'text-fg-3 italic')}>
                         {m.content || typeLabel(m.type)}

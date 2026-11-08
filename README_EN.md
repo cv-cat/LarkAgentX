@@ -64,7 +64,11 @@ Accounts, chat history, reply modes, the agent and trigger rules are all managed
 ```bash
 lark auth qr                      # log in by QR code; add --region lark for Lark
 lark listen --agent               # receive messages and hand them to the agent
-lark send <chat_id> <text>        # send a message
+lark send <chat_id> <text>        # send a message; -m for markdown, --image / --file for attachments, --mention for a real @
+lark recall <msg_id>              # recall a message you sent
+lark forward <msg_id> --to <id>   # forward; --merge combines them into one chat record
+lark memory add "<text>"          # long-term memory; lark memory lists it, edit / rm change or delete entries
+lark task add --in 30m "<text>"   # scheduled task; --at and --daily also work, lark task lists them
 lark history <chat_id> --save     # pull message history
 lark api <type> '<json>'          # call any gateway API
 ```

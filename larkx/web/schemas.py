@@ -45,12 +45,17 @@ class SettingsIn(BaseModel):
     # 模型名会作为命令行参数传给 agent CLI,不允许以 - 开头,免得被当成别的开关
     agent_model: str = Field('', max_length=100, pattern=r'^([A-Za-z0-9][A-Za-z0-9_.:/-]*)?$')
     workdir: str = Field('', max_length=500)
-    agent_timeout: int = Field(0, ge=0, le=3600)          # 秒;0 = 不限
+    agent_timeout: int = Field(7200, ge=0, le=86400)        # 秒;0 = 不限
     system_prompt: str = Field('', max_length=8000)
     context_scope: Literal['anchor', 'chat', 'global'] = 'anchor'
     mark_read: bool = True
     reply_in_topic: bool = True                           # 话题里的消息: 回到话题 / 发到外面的主会话
     reply_mode: Literal['direct', 'quote', 'thread'] = 'direct'   # 主会话的消息: 直接发 / 引用 / 开话题
+    reply_signature: str = Field('', max_length=100)      # 加在 agent 发的消息末尾
+    ack_reaction: bool = False       # 交给 agent 的消息先点个 👌
+    deny_reply: str = Field('', max_length=500)           # 不在「只处理这些发送者」里的人触发时回的话
+    memory_enabled: bool = False
+    memory_review_at: str = Field('00:00', pattern=r'^(([01]\d|2[0-3]):[0-5]\d)?$')   # 每日回顾时间,空 = 不回顾
     triggers: TriggersIn = Field(default_factory=TriggersIn)
 
 
@@ -69,3 +74,11 @@ class ChatAgentIn(BaseModel):
 
 class ResetIn(BaseModel):
     anchor: str = Field('', max_length=64)
+
+
+class MemoryIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+
+
+class LoginIn(BaseModel):
+    token: str = Field(..., max_length=500)

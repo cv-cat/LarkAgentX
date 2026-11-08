@@ -64,7 +64,11 @@ lark web            # 打开 http://127.0.0.1:8765 ，扫码添加账号
 ```bash
 lark auth qr                      # 扫码登录，Lark 账号加 --region lark
 lark listen --agent               # 收消息并交给 agent
-lark send <chat_id> <text>        # 发消息
+lark send <chat_id> <text>        # 发消息；-m 按 markdown 发，--image、--file 发图片和文件，--mention 真正 @ 人
+lark recall <msg_id>              # 撤回自己发的消息
+lark forward <msg_id> --to <id>   # 转发；--merge 合并成一条聊天记录
+lark memory add "<内容>"          # 长期记忆；lark memory 查看，edit、rm 修改和删除
+lark task add --in 30m "<内容>"   # 定时任务；也可以用 --at、--daily，lark task 查看
 lark history <chat_id> --save     # 拉历史消息
 lark api <type> '<json>'          # 调任意网关接口
 ```

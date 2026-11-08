@@ -2,7 +2,9 @@ import asyncio
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sysconfig
 import uuid
 
 from loguru import logger
@@ -19,6 +21,38 @@ BACKENDS = {
 }
 
 
+def _agent_path() -> str:
+    """agent 里执行的 lark 要和当前进程是同一个安装(同一个 Python、同样版本的依赖)。
+    PATH 里先找到的 lark 是别的 Python 装的时,把当前 Python 的脚本目录放到最前面。"""
+    path = os.environ.get('PATH', '')
+    scripts = sysconfig.get_path('scripts')
+    mine = shutil.which('lark', path=scripts) if scripts else None
+    if not mine:
+        return path
+    found = shutil.which('lark', path=path)
+    if found and os.path.normcase(os.path.dirname(os.path.abspath(found))) == os.path.normcase(os.path.dirname(os.path.abspath(mine))):
+        return path
+    return scripts + os.pathsep + path
+
+
+def _kill_tree(proc):
+    """连同子进程一起结束。只杀 agent 进程本身的话,Windows 上 codex 这类 .cmd 包装背后的 node、
+    agent 正在执行的命令都还会接着跑,/stop 和超时就等于没停。"""
+    if proc.returncode is not None:
+        return
+    try:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], capture_output=True, timeout=10)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+
 class AgentBackend:
     name = 'base'
 
@@ -27,6 +61,10 @@ class AgentBackend:
 
     def reset_session(self, session_key: str):
         pass
+
+    def session_started(self, session_key: str) -> bool:
+        """这个会话的 agent 上下文是否已经建立(第一轮成功跑完过)。"""
+        return True
 
 
 class CliBackend(AgentBackend):
@@ -81,6 +119,10 @@ class CliBackend(AgentBackend):
         if row:
             self.storage.session_upsert(skey, row.chat_id, row.anchor, self._new_session_id(skey, stable=False), False)
 
+    def session_started(self, session_key: str) -> bool:
+        row = self.storage.session_get(self._key(session_key))
+        return bool(row and row.started)
+
     def model_args(self) -> list:
         return []
 
@@ -105,6 +147,9 @@ class CliBackend(AgentBackend):
         args = [exe] + self.build_args(sess)
         preview = prompt.replace('\n', ' ')[:300]
         self.log.info(f'调 agent [{session_key}]: {" ".join(args)} << {preview}' + ('…' if len(prompt) > 300 else ''))
+        # 告诉 agent 里调用的 lark 命令:这是 agent 发的(加署名、标记),在哪个会话里(定时任务记到这个会话)
+        env = {**os.environ, 'PATH': _agent_path(), 'LARKX_AGENT': '1', 'LARKX_ACCOUNT': self.account_id,
+               'LARKX_CHAT_ID': chat_id or '', 'LARKX_ANCHOR': anchor or ''}
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
@@ -112,6 +157,8 @@ class CliBackend(AgentBackend):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=workdir,
+                env=env,
+                start_new_session=True,     # 非 Windows: 自成一个进程组,结束时整组杀掉(Windows 上忽略)
             )
         except FileNotFoundError:
             self.log.error(f'未找到 {self.binary} CLI,请确认已安装并在 PATH 中')
@@ -120,24 +167,37 @@ class CliBackend(AgentBackend):
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode('utf-8')), timeout)
         except asyncio.TimeoutError:
-            proc.kill()
+            _kill_tree(proc)
             await proc.wait()
+            self._abandon_first_turn(skey, sess, chat_id, anchor)
             self.log.error(f'agent 超过 {timeout}s 未返回,已终止 [{session_key}]')
             return ''
         except asyncio.CancelledError:
-            # 账号被停掉时别留下无人收尾的 agent 子进程
-            proc.kill()
+            # /stop 打断或账号被停掉: 别留下无人收尾的 agent 进程
+            _kill_tree(proc)
+            self._abandon_first_turn(skey, sess, chat_id, anchor)
             raise
         out = stdout.decode('utf-8', errors='replace').strip()
         if proc.returncode != 0:
             err = stderr.decode('utf-8', errors='replace').strip()
             self.log.error(f'agent 返回非零({proc.returncode}): {err[-500:]}')
+            self._abandon_first_turn(skey, sess, chat_id, anchor)
             return ''
         text, agent_sid = self.parse(out, sess)
         if agent_sid and ((not sess['started']) or agent_sid != sess['id']):
             self.storage.session_upsert(skey, chat_id, anchor, agent_sid, True)
         self.storage.session_touch(skey)
         return text
+
+    def _abandon_first_turn(self, skey: str, sess: dict, chat_id: str, anchor: str):
+        """第一轮没跑完就换一个新的会话 id。claude 可能已经按这个 id 建了会话文件,
+        下次再用 --session-id 会报「Session ID … is already in use」,这个会话之后的消息就全都失败了。"""
+        if sess['started']:
+            return
+        try:
+            self.storage.session_upsert(skey, chat_id, anchor, self._new_session_id(skey, stable=False), False)
+        except Exception as e:
+            self.log.warning(f'换新的 agent 会话 id 失败: {e}')
 
 
 CLAUDE_FLAGS = ['-p', '--dangerously-skip-permissions']
