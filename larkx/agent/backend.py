@@ -17,8 +17,23 @@ SESSIONS_PATH = DATA_DIR / 'agent_sessions.json'
 BACKENDS = {
     'claude': {'label': 'Claude Code', 'binary': 'claude'},
     'codex': {'label': 'Codex', 'binary': 'codex'},
+    'trae': {'label': 'TRAE CLI', 'binary': 'traecli', 'alt': ('trae-cli',)},
+    'doubao': {'label': '豆包工作', 'binary': 'doubao'},
+    'pi': {'label': 'Pi', 'binary': 'pi'},
+    'opencode': {'label': 'opencode', 'binary': 'opencode'},
+    'cursor': {'label': 'Cursor CLI', 'binary': 'cursor-agent', 'alt': ('agent',)},
     'none': {'label': '不接入 agent(仅入库)', 'binary': ''},
 }
+
+
+def find_binary(backend: str) -> str:
+    """后端 CLI 在 PATH 里的路径,找不到为空。有的 CLI 换过名字(cursor-agent / agent),按顺序都试一遍。"""
+    info = BACKENDS.get(backend) or {}
+    for name in (info.get('binary'), *info.get('alt', ())):
+        path = name and shutil.which(name)
+        if path:
+            return path
+    return ''
 
 
 def _agent_path() -> str:
@@ -113,6 +128,12 @@ class CliBackend(AgentBackend):
             return {'id': sid, 'started': False}
         return {'id': row.agent_session_id, 'started': bool(row.started)}
 
+    def _exe(self) -> str:
+        info = BACKENDS.get(self.name)
+        if info and info['binary'] == self.binary:
+            return find_binary(self.name)
+        return shutil.which(self.binary) or ''     # 自定义命令模板指定的程序
+
     def reset_session(self, session_key: str):
         skey = self._key(session_key)
         row = self.storage.session_get(skey)
@@ -129,14 +150,22 @@ class CliBackend(AgentBackend):
     def build_args(self, sess: dict) -> list:
         raise NotImplementedError
 
+    def prompt_args(self, prompt: str) -> list:
+        """不收 stdin 的 CLI(豆包、Cursor)把 prompt 放进命令行参数,返回非空时 stdin 不再写 prompt。"""
+        return []
+
     def parse(self, stdout: str, sess: dict) -> tuple:
         """返回 (给日志用的文本, 需要持久化的 agent session id;拿不到则为空)"""
         raise NotImplementedError
 
+    def parse_output(self, stdout: str, stderr: str, sess: dict) -> tuple:
+        """会话 id 写在 stderr 里的 CLI(豆包)覆盖这个。"""
+        return self.parse(stdout, sess)
+
     async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='') -> str:
         skey = self._key(session_key)
         sess = self._session(skey, chat_id, anchor)
-        exe = shutil.which(self.binary)
+        exe = self._exe()
         if not exe:
             self.log.error(f'未找到 {self.binary} CLI,请确认已安装并在 PATH 中')
             return ''
@@ -147,6 +176,9 @@ class CliBackend(AgentBackend):
         args = [exe] + self.build_args(sess)
         preview = prompt.replace('\n', ' ')[:300]
         self.log.info(f'调 agent [{session_key}]: {" ".join(args)} << {preview}' + ('…' if len(prompt) > 300 else ''))
+        extra = self.prompt_args(prompt)
+        args += extra
+        stdin_data = b'' if extra else prompt.encode('utf-8')
         # 告诉 agent 里调用的 lark 命令:这是 agent 发的(加署名、标记),在哪个会话里(定时任务记到这个会话)
         env = {**os.environ, 'PATH': _agent_path(), 'LARKX_AGENT': '1', 'LARKX_ACCOUNT': self.account_id,
                'LARKX_CHAT_ID': chat_id or '', 'LARKX_ANCHOR': anchor or ''}
@@ -165,7 +197,7 @@ class CliBackend(AgentBackend):
             return ''
         timeout = int(self.cfg.get('agent_timeout') or 0) or None
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(prompt.encode('utf-8')), timeout)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(stdin_data), timeout)
         except asyncio.TimeoutError:
             _kill_tree(proc)
             await proc.wait()
@@ -183,7 +215,7 @@ class CliBackend(AgentBackend):
             self.log.error(f'agent 返回非零({proc.returncode}): {err[-500:]}')
             self._abandon_first_turn(skey, sess, chat_id, anchor)
             return ''
-        text, agent_sid = self.parse(out, sess)
+        text, agent_sid = self.parse_output(out, stderr.decode('utf-8', errors='replace'), sess)
         if agent_sid and ((not sess['started']) or agent_sid != sess['id']):
             self.storage.session_upsert(skey, chat_id, anchor, agent_sid, True)
         self.storage.session_touch(skey)
@@ -269,6 +301,173 @@ class CodexBackend(CliBackend):
         return text, thread_id
 
 
+class TraeBackend(CodexBackend):
+    """TRAE CLI(traecli)是 Codex 的分支,exec --json 的事件格式和 Codex 一样。"""
+    name = 'trae'
+    binary = 'traecli'
+
+    def _key(self, session_key: str) -> str:
+        return 'trae|' + session_key
+
+    def build_args(self, sess: dict, extra_dirs=(), read_only: bool = False) -> list:
+        flags = list(CODEX_FLAGS)
+        if sess['started'] and sess['id']:
+            # exec resume 不收 --add-dir,额外目录只在首轮带上
+            return ['exec', 'resume'] + flags + self.model_args() + [sess['id'], '-']
+        for d in extra_dirs:
+            flags += ['--add-dir', str(d)]
+        return ['exec'] + flags + self.model_args() + ['-']
+
+
+DOUBAO_FLAGS = ['--dangerously-bypass-approvals-and-sandbox']
+
+
+class DoubaoBackend(CliBackend):
+    """豆包工作 CLI(doubao)。prompt 只能经 -p 传入;-p 模式下回复写 stdout,
+    会话 id 以一行 {"type":"session","session_id":…} 写到 stderr,续聊用 --resume <id>。"""
+    name = 'doubao'
+    binary = 'doubao'
+
+    def _new_session_id(self, session_key: str, stable: bool) -> str:
+        return ''
+
+    def _key(self, session_key: str) -> str:
+        return 'doubao|' + session_key
+
+    def model_args(self) -> list:
+        model = self.cfg.get('agent_model')
+        return ['--model', model] if model else []
+
+    def build_args(self, sess: dict, extra_dirs=(), read_only: bool = False) -> list:
+        resume = ['--resume', sess['id']] if sess['started'] and sess['id'] else []
+        return resume + DOUBAO_FLAGS + self.model_args()
+
+    def prompt_args(self, prompt: str) -> list:
+        return ['-p', prompt]
+
+    def parse(self, stdout: str, sess: dict) -> tuple:
+        return stdout, ''
+
+    def parse_output(self, stdout: str, stderr: str, sess: dict) -> tuple:
+        sid = ''
+        for line in stderr.splitlines():
+            line = line.strip()
+            if not line.startswith('{'):
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and ev.get('type') == 'session' and ev.get('session_id'):
+                sid = str(ev['session_id'])
+        return stdout, sid or (sess['id'] if sess['started'] else '')
+
+
+class PiBackend(CliBackend):
+    """Pi(pi-coding-agent)。--session-id 打开当前目录下这个 id 的会话,没有就新建,所以可以像 claude 一样预先指定 id。"""
+    name = 'pi'
+    binary = 'pi'
+
+    def _key(self, session_key: str) -> str:
+        return 'pi|' + session_key
+
+    def model_args(self) -> list:
+        model = self.cfg.get('agent_model')
+        return ['--model', model] if model else []
+
+    def build_args(self, sess: dict, extra_dirs=(), read_only: bool = False) -> list:
+        args = ['-p', '--session-id', sess['id']]
+        if read_only:
+            args += ['--exclude-tools', 'edit,write']
+        return args + self.model_args()
+
+    def parse(self, stdout: str, sess: dict) -> tuple:
+        return stdout, sess['id']
+
+
+class OpencodeBackend(CliBackend):
+    """opencode run --format json: 每行一个事件,顶层带 sessionID;type=text 的事件给出回复文本(按 part 增量)。"""
+    name = 'opencode'
+    binary = 'opencode'
+
+    def _new_session_id(self, session_key: str, stable: bool) -> str:
+        return ''
+
+    def _key(self, session_key: str) -> str:
+        return 'opencode|' + session_key
+
+    def model_args(self) -> list:
+        model = self.cfg.get('agent_model')
+        return ['--model', model] if model else []
+
+    def build_args(self, sess: dict, extra_dirs=(), read_only: bool = False) -> list:
+        args = ['run', '--format', 'json', '--dangerously-skip-permissions']
+        if sess['started'] and sess['id']:
+            args += ['--session', sess['id']]
+        return args + self.model_args()
+
+    def parse(self, stdout: str, sess: dict) -> tuple:
+        session_id, parts = '', {}
+        for line in stdout.splitlines():
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            session_id = ev.get('sessionID') or session_id
+            kind = ev.get('type')
+            if kind == 'text':
+                part = ev.get('part') or {}
+                msg = part.get('messageID') or ''
+                parts.setdefault(msg, {})
+                pid = part.get('id') or ''
+                parts[msg][pid] = parts[msg].get(pid, '') + (part.get('text') or '')
+            elif kind == 'error':
+                self.log.warning(f'opencode 出错: {json.dumps(ev.get("error"), ensure_ascii=False)[:300]}')
+        text = '\n\n'.join(t for t in parts[list(parts)[-1]].values() if t.strip()) if parts else ''
+        return text.strip(), session_id
+
+
+class CursorBackend(CliBackend):
+    """Cursor CLI(cursor-agent,新版叫 agent)。-p --output-format json 输出一个 result 对象,带 result 和 session_id。"""
+    name = 'cursor'
+    binary = 'cursor-agent'
+
+    def _new_session_id(self, session_key: str, stable: bool) -> str:
+        return ''
+
+    def _key(self, session_key: str) -> str:
+        return 'cursor|' + session_key
+
+    def model_args(self) -> list:
+        model = self.cfg.get('agent_model')
+        return ['--model', model] if model else []
+
+    def build_args(self, sess: dict, extra_dirs=(), read_only: bool = False) -> list:
+        args = ['-p', '--output-format', 'json', '--trust', '--sandbox', 'disabled']
+        if not read_only:
+            args.append('--force')
+        if sess['started'] and sess['id']:
+            args += ['--resume', sess['id']]
+        return args + self.model_args()
+
+    def prompt_args(self, prompt: str) -> list:
+        return ['--', prompt]
+
+    def parse(self, stdout: str, sess: dict) -> tuple:
+        for line in reversed(stdout.splitlines()):
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict) and ev.get('type') == 'result':
+                if ev.get('is_error'):
+                    self.log.warning(f'cursor 本轮失败: {str(ev.get("result"))[:300]}')
+                return ev.get('result') or '', ev.get('session_id') or ''
+        return '', ''
+
+
 class NullBackend(AgentBackend):
     name = 'none'
 
@@ -282,6 +481,8 @@ def get_backend(name: str=None, storage=None, cfg: dict=None, account_id: str=No
     name = name or cfg['agent_backend']
     if name == 'claude':
         return ClaudeCodeBackend(storage=storage, cfg=cfg, account_id=account_id)
-    if name == 'codex':
-        return CodexBackend(storage=storage, cfg=cfg, account_id=account_id)
+    cls = {'codex': CodexBackend, 'trae': TraeBackend, 'doubao': DoubaoBackend, 'pi': PiBackend,
+           'opencode': OpencodeBackend, 'cursor': CursorBackend}.get(name)
+    if cls:
+        return cls(storage=storage, cfg=cfg, account_id=account_id)
     return NullBackend()

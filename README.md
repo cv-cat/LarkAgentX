@@ -10,13 +10,13 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=FFD43B&labelColor=232838)](pyproject.toml)
 [![GitHub stars](https://img.shields.io/github/stars/cv-cat/LarkAgentX?style=flat-square&logo=github&labelColor=232838&color=E3A008)](https://github.com/cv-cat/LarkAgentX/stargazers)
 [![Feishu · Lark](https://img.shields.io/badge/platform-Feishu%20%C2%B7%20Lark-3370FF?style=flat-square&labelColor=232838)](#快速上手)
-[![Claude Code · Codex](https://img.shields.io/badge/agent-Claude%20Code%20%C2%B7%20Codex-D97757?style=flat-square&labelColor=232838)](#为什么用-larkagentx)
+[![Claude Code · Codex · TRAE · 豆包 · Pi · opencode · Cursor](https://img.shields.io/badge/agent-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20TRAE%20%C2%B7%20%E8%B1%86%E5%8C%85%20%C2%B7%20Pi%20%C2%B7%20opencode%20%C2%B7%20Cursor-D97757?style=flat-square&labelColor=232838)](#为什么用-larkagentx)
 
 [主页](https://larkagentx.cvcat.site) · **简体中文** · [English](README_EN.md)
 
 </div>
 
-LarkAgentX 让你的飞书账号直连本地的 coding agent。扫码登录后，收到的消息交给本机的 Claude Code 或 Codex 处理，回复以你的账号发出。无需配置飞书机器人，飞书和 Lark 都支持。
+LarkAgentX 让你的飞书账号直连本地的 coding agent。扫码登录后，收到的消息交给本机的 coding agent（Claude Code、Codex、TRAE CLI、豆包工作、Pi、opencode、Cursor CLI）处理，回复以你的账号发出。无需配置飞书机器人，飞书和 Lark 都支持。
 
 <div align="center">
 
@@ -39,7 +39,7 @@ pip install -e .
 lark web            # 打开 http://127.0.0.1:8765 ，扫码添加账号
 ```
 
-本机需要装好 Claude Code 或 Codex。扫码用飞书 App 里的「扫一扫」。
+本机需要装好其中任意一个 agent CLI：`claude`、`codex`、`traecli`、`doubao`、`pi`、`opencode` 或 `cursor-agent`，并先在命令行里登录好。扫码用飞书 App 里的「扫一扫」。
 
 ## 控制台
 
@@ -53,7 +53,7 @@ lark web            # 打开 http://127.0.0.1:8765 ，扫码添加账号
 <img src="static/resource/mascot/laptop.webp" alt="吉祥物盘腿坐着敲电脑" width="150" align="right">
 
 - **不用建机器人。** 直接用你自己的飞书账号收发消息。
-- **接本地的 agent。** Claude Code 或 Codex 都行，每个会话有自己的上下文。
+- **接本地的 agent。** Claude Code、Codex、TRAE CLI、豆包工作、Pi、opencode、Cursor CLI 都行，在控制台「设置 → Agent」里切换，每个会话有自己的上下文。
 - **多账号。** 飞书和 Lark 账号可以同时在线，同一个账号只会运行一处。
 - **数据在本地。** 登录凭证和消息都存在 `~/.larkx/`。
 
