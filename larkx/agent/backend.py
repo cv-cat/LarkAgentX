@@ -71,7 +71,7 @@ def _kill_tree(proc):
 class AgentBackend:
     name = 'base'
 
-    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='') -> str:
+    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='', workdir: str=None) -> str:
         raise NotImplementedError
 
     def reset_session(self, session_key: str):
@@ -162,14 +162,14 @@ class CliBackend(AgentBackend):
         """会话 id 写在 stderr 里的 CLI(豆包)覆盖这个。"""
         return self.parse(stdout, sess)
 
-    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='') -> str:
+    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='', workdir: str=None) -> str:
         skey = self._key(session_key)
         sess = self._session(skey, chat_id, anchor)
         exe = self._exe()
         if not exe:
             self.log.error(f'未找到 {self.binary} CLI,请确认已安装并在 PATH 中')
             return ''
-        workdir = self.cfg.get('workdir') or None
+        workdir = workdir or self.cfg.get('workdir') or None
         if workdir and not os.path.isdir(workdir):
             self.log.error(f'agent 工作目录不存在: {workdir}')
             return ''
@@ -471,7 +471,7 @@ class CursorBackend(CliBackend):
 class NullBackend(AgentBackend):
     name = 'none'
 
-    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='') -> str:
+    async def run(self, session_key: str, prompt: str, chat_id: str='', anchor: str='', workdir: str=None) -> str:
         return ''
 
 

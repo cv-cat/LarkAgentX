@@ -273,21 +273,25 @@ def cmd_forward(args):
 def cmd_memory(args):
     from . import memory
     account_id = accounts.normalize(args.account)
+    # 哪份记忆: --chat 指定;agent 里调用时按它所在的会话(列在「只处理这些会话」里的会话有独立记忆)
+    chat = getattr(args, 'chat', None) or ''
+    if not chat and os.environ.get('LARKX_AGENT'):
+        chat = memory.scope_for(accounts.get_settings(account_id), os.environ.get('LARKX_CHAT_ID'))
     try:
         if args.action == 'add':
-            items = memory.add(account_id, ' '.join(args.args))
+            items = memory.add(account_id, ' '.join(args.args), chat)
         elif args.action == 'edit':
             if len(args.args) < 2 or not args.args[0].isdigit():
                 print('用法: lark memory edit 编号 "新的内容"', file=sys.stderr)
                 return 1
-            items = memory.edit(account_id, int(args.args[0]), ' '.join(args.args[1:]))
+            items = memory.edit(account_id, int(args.args[0]), ' '.join(args.args[1:]), chat)
         elif args.action == 'rm':
             if len(args.args) != 1 or not args.args[0].isdigit():
                 print('用法: lark memory rm 编号', file=sys.stderr)
                 return 1
-            items = memory.remove(account_id, int(args.args[0]))
+            items = memory.remove(account_id, int(args.args[0]), chat)
         else:
-            items = memory.entries(account_id)
+            items = memory.entries(account_id, chat)
     except memory.MemoryEditError as e:
         print(str(e), file=sys.stderr)
         return 1
@@ -585,6 +589,7 @@ def main():
     p.add_argument('--merge', action='store_true', help='合并成一条聊天记录转发(消息要来自同一个会话)')
     p.set_defaults(fn=cmd_forward)
     p = sub.add_parser('memory', parents=[acct], help='长期记忆:查看、添加、修改、删除条目')
+    p.add_argument('--chat', help='操作这个会话的独立记忆(默认: 共用记忆;agent 里调用时自动用它所在会话的)')
     p.set_defaults(fn=cmd_memory, action='list', args=[])
     msub = p.add_subparsers(dest='action')
     msub.add_parser('list', parents=[sub_acct], help='查看全部条目')

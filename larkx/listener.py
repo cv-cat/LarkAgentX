@@ -327,7 +327,9 @@ class Listener:
             await self._run_review()
 
     async def _run_review(self) -> str:
-        transcript = memory.review_transcript(self.storage, int(time.time()) - 86400, self._auth.user_id)
+        # 有独立记忆的会话不进共用记忆的回顾
+        own = (self.cfg.get('triggers') or {}).get('include_chats') or []
+        transcript = memory.review_transcript(self.storage, int(time.time()) - 86400, self._auth.user_id, exclude_chats=own)
         if not transcript:
             self.log.info('每日回顾: 最近 24 小时没有聊天,跳过')
             return 'empty'

@@ -146,21 +146,42 @@ def build_router(mgr: Manager, auth_required: bool) -> APIRouter:
         except Exception as e:
             raise ValueError(f'搜索失败: {e}')
 
+    @r.get('/accounts/{account_id}/chat-targets')
+    async def chat_targets(account_id: str, q: str = Query('', max_length=50), ids: str = Query('', max_length=4000),
+                           groups: bool = False):
+        """q: 按名字搜人和群(groups=true 只搜群);ids: 逗号分隔的会话 id,取名字和类型(私聊/群聊)。"""
+        try:
+            return await asyncio.to_thread(mgr.chat_targets, account_id, q.strip(), [i for i in ids.split(',') if i], groups)
+        except (AuthExpired, NotFound):
+            raise
+        except Exception as e:
+            raise ValueError(f'搜索失败: {e}')
+
+    @r.get('/accounts/{account_id}/dm-chat')
+    async def dm_chat(account_id: str, user: str = Query(..., max_length=64), name: str = Query('', max_length=100)):
+        """和某人的私聊会话 id,往会话名单里加人时用。"""
+        try:
+            return await asyncio.to_thread(mgr.dm_chat, account_id, user, name)
+        except (AuthExpired, NotFound, ValueError):
+            raise
+        except Exception as e:
+            raise ValueError(f'获取私聊会话失败: {e}')
+
     @r.get('/accounts/{account_id}/memory')
-    async def get_memory(account_id: str):
-        return mgr.memory(account_id)
+    async def get_memory(account_id: str, chat: str = Query('', max_length=64)):
+        return mgr.memory(account_id, chat)
 
     @r.post('/accounts/{account_id}/memory')
-    async def add_memory(account_id: str, body: MemoryIn):
-        return await asyncio.to_thread(mgr.memory_change, account_id, 'add', text=body.text)
+    async def add_memory(account_id: str, body: MemoryIn, chat: str = Query('', max_length=64)):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'add', text=body.text, chat=chat)
 
     @r.put('/accounts/{account_id}/memory/{n}')
-    async def edit_memory(account_id: str, n: int, body: MemoryIn):
-        return await asyncio.to_thread(mgr.memory_change, account_id, 'edit', n=n, text=body.text)
+    async def edit_memory(account_id: str, n: int, body: MemoryIn, chat: str = Query('', max_length=64)):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'edit', n=n, text=body.text, chat=chat)
 
     @r.delete('/accounts/{account_id}/memory/{n}')
-    async def remove_memory(account_id: str, n: int):
-        return await asyncio.to_thread(mgr.memory_change, account_id, 'rm', n=n)
+    async def remove_memory(account_id: str, n: int, chat: str = Query('', max_length=64)):
+        return await asyncio.to_thread(mgr.memory_change, account_id, 'rm', n=n, chat=chat)
 
     @r.post('/accounts/{account_id}/memory/review')
     async def review_memory(account_id: str):

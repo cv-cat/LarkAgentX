@@ -342,6 +342,30 @@ class Storage:
         finally:
             s.close()
 
+    def p2p_peers(self, chat_ids, me: str = '') -> dict:
+        """{私聊会话 id: 对方 user_id},从本地消息里找不是我发的那一方。"""
+        chat_ids = [str(c) for c in chat_ids]
+        if not chat_ids:
+            return {}
+        s = self.Session()
+        try:
+            return dict(s.query(Message.chat_id, func.max(Message.sender_id))
+                        .filter(Message.chat_id.in_(chat_ids), Message.sender_id != str(me), Message.sender_id != '')
+                        .group_by(Message.chat_id).all())
+        finally:
+            s.close()
+
+    def chat_info(self, chat_ids) -> dict:
+        """{chat_id: (名字, chat_type)},只含本地有记录的。"""
+        chat_ids = [str(c) for c in chat_ids]
+        if not chat_ids:
+            return {}
+        s = self.Session()
+        try:
+            return {r.chat_id: (r.name or '', r.chat_type or 0) for r in s.query(Chat).filter(Chat.chat_id.in_(chat_ids)).all()}
+        finally:
+            s.close()
+
     def sender_names(self, user_ids) -> dict:
         """这些人在本地消息里出现过的名字 {user_id: name}。"""
         user_ids = [str(u) for u in user_ids]

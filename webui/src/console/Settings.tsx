@@ -1,6 +1,6 @@
 import { ArrowRight, ChevronRight, Trash2, X } from 'lucide-react'
 import { type KeyboardEvent, type ReactNode, useEffect, useState } from 'react'
-import { type Account, type Person, type Runtime, type Settings, type Triggers, api, enc } from '../api'
+import { type Account, type ChatConfig, type ChatTarget, type MemoryData, type Person, type Runtime, type Settings, type Triggers, api, enc } from '../api'
 import { Link, navigate } from '../router'
 import { useConsole } from '../store'
 import { AccountAvatar, Avatar, Button, Card, Confirm, Field, Input, Seg, SwitchRow, TagInput, Textarea, attempt, cn, toast } from '../ui'
@@ -16,7 +16,7 @@ const SECTIONS = [
 ]
 
 /** 名单里的人: 按名字搜索添加,显示头像和名字;也可以直接粘贴 user_id 回车 */
-function PeopleInput({ accountId, value, onChange }: { accountId: string; value: string[]; onChange: (v: string[]) => void }) {
+function PeopleInput({ accountId, value, onChange, placeholder }: { accountId: string; value: string[]; onChange: (v: string[]) => void; placeholder?: string }) {
   const [names, setNames] = useState<Record<string, Person>>({})
   const [q, setQ] = useState('')
   const [results, setResults] = useState<Person[] | null>(null)
@@ -89,7 +89,7 @@ function PeopleInput({ accountId, value, onChange }: { accountId: string; value:
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKey}
           onBlur={() => setResults(null)}
-          placeholder={value.length ? '' : '输入名字搜索'}
+          placeholder={value.length ? '' : placeholder || '输入名字搜索'}
           className="h-6 min-w-24 flex-1 bg-transparent px-1 text-small outline-none placeholder:text-fg-4"
         />
       </div>
@@ -112,6 +112,229 @@ function PeopleInput({ accountId, value, onChange }: { accountId: string; value:
           )) : <div className="px-2 py-2 text-small text-fg-3">{busy ? '正在搜索…' : '没有找到'}</div>}
         </div>
       )}
+    </div>
+  )
+}
+
+/** 会话名单: 按名字搜人或群添加(人会换成和他的私聊会话);也可以直接粘贴会话 id 回车。single: 只选一个 */
+function ChatInput({ accountId, value, onChange, single, groupsOnly, placeholder }: { accountId: string; value: string[]; onChange: (v: string[]) => void; single?: boolean; groupsOnly?: boolean; placeholder?: string }) {
+  const [names, setNames] = useState<Record<string, ChatTarget>>({})
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState<ChatTarget[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const base = `/accounts/${enc(accountId)}`
+  const remember = (ts: ChatTarget[]) => setNames((cur) => ({ ...cur, ...Object.fromEntries(ts.map((t) => [t.id, t])) }))
+
+  useEffect(() => {
+    const missing = value.filter((id) => !names[id])
+    if (missing.length) api<ChatTarget[]>('GET', `${base}/chat-targets?ids=${enc(missing.join(','))}`).then(remember).catch(() => undefined)
+  }, [value.join(','), base])
+
+  useEffect(() => {
+    const text = q.trim()
+    if (!text || /^[\w-]+$/.test(text) && /\d{6,}|^oc_/.test(text)) {
+      setResults(null)
+      return
+    }
+    const t = setTimeout(() => {
+      setBusy(true)
+      api<ChatTarget[]>('GET', `${base}/chat-targets?q=${enc(text)}${groupsOnly ? '&groups=true' : ''}`)
+        .then(setResults)
+        .catch((e: Error) => {
+          setResults([])
+          toast(e.message, true)
+        })
+        .finally(() => setBusy(false))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [q, base, groupsOnly])
+
+  const put = (t: ChatTarget) => {
+    remember([t])
+    onChange(single ? [t.id] : value.includes(t.id) ? value : [...value, t.id])
+    setQ('')
+    setResults(null)
+  }
+  const add = async (t: ChatTarget) => {
+    if (t.kind !== 'user') return put(t)
+    setBusy(true)
+    try {
+      const dm = await api<ChatTarget>('GET', `${base}/dm-chat?user=${enc(t.id)}&name=${enc(t.name)}`)
+      put({ ...dm, name: dm.name || t.name, avatar: t.avatar })
+    } catch (e) {
+      toast((e as Error).message, true)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return
+    const text = q.trim()
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (text.startsWith('oc_')) toast('这是开放平台的会话 ID，这里用不了，请按名字搜索群或人', true)
+      else if (/^\d{6,}$/.test(text)) put({ kind: 'group', id: text, name: '', desc: '', avatar: '' })
+      else if (results?.length) void add(results[0]!)
+    } else if (e.key === 'Backspace' && !q && value.length) {
+      onChange(value.slice(0, -1))
+    } else if (e.key === 'Escape') {
+      setResults(null)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-sm bg-fill-2 px-2 py-1.5 ring-1 ring-transparent ring-inset transition-shadow focus-within:bg-transparent focus-within:ring-accent-ring">
+        {value.map((id) => {
+          const t = names[id]
+          const name = t?.name || id
+          return (
+            <span key={id} title={`会话 ID ${id}`} className="inline-flex h-6 items-center gap-1 rounded-full bg-surface-3 pr-1 pl-0.5 text-caption shadow-raised dark:bg-fill-3">
+              <Avatar src={t?.avatar || `/api/accounts/${enc(accountId)}/avatars/chat/${id}`} name={name} size="xs" />
+              <span className="max-w-32 truncate">{name}</span>
+              {t && <span className="text-fg-4">{t.kind === 'p2p' ? '私聊' : '群'}</span>}
+              <button type="button" aria-label={`移除 ${name}`} className="press grid size-4 place-items-center rounded-full text-fg-3 hover:bg-fill-3 hover:text-fg-1" onClick={() => onChange(value.filter((x) => x !== id))}>
+                <X className="size-3" />
+              </button>
+            </span>
+          )
+        })}
+        {!(single && value.length) && (
+          <input
+            value={q}
+            autoComplete="off"
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onKey}
+            onBlur={() => setResults(null)}
+            placeholder={value.length ? '' : placeholder || (groupsOnly ? '搜索群' : '搜索人或群')}
+            className="h-6 min-w-24 flex-1 bg-transparent px-1 text-small outline-none placeholder:text-fg-4"
+          />
+        )}
+      </div>
+      {results !== null && (
+        <div className="menu-panel absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md p-1">
+          {results.length ? results.map((t) => (
+            <button
+              key={t.kind + t.id}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void add(t)}
+              className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 text-left text-small hover:bg-fill-2"
+            >
+              <Avatar src={t.avatar} name={t.name} size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{t.name || t.id}<span className="ml-1.5 text-caption font-normal text-fg-3">{t.kind === 'user' ? '私聊' : '群'}</span></span>
+                <span className="block truncate text-caption text-fg-3">{t.desc}</span>
+              </span>
+            </button>
+          )) : <div className="px-2 py-2 text-small text-fg-3">{busy ? '正在搜索…' : '没有找到'}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 一个会话自己的记忆: 展开后查看、添加、删除。改动立即生效,不用点保存 */
+function ChatMemory({ accountId, chatId }: { accountId: string; chatId: string }) {
+  const [data, setData] = useState<MemoryData | null>(null)
+  const [draft, setDraft] = useState('')
+  const base = `/accounts/${enc(accountId)}/memory`
+  const q = `?chat=${enc(chatId)}`
+  useEffect(() => {
+    api<MemoryData>('GET', base + q).then(setData).catch((e: Error) => toast(e.message, true))
+  }, [base, q])
+  const add = () => attempt(async () => {
+    const text = draft.trim()
+    if (!text) return
+    setData(await api<MemoryData>('POST', base + q, { text }))
+    setDraft('')
+  })
+  const remove = (n: number) => attempt(async () => setData(await api<MemoryData>('DELETE', `${base}/${n}${q}`)))
+  if (!data) return <div className="px-1 py-2 text-caption text-fg-3">正在读取…</div>
+  return (
+    <div className="flex flex-col gap-1.5 rounded-sm bg-fill-1 p-3">
+      {data.entries.length ? data.entries.map((e, i) => (
+        <div key={i} className="flex items-start gap-2 text-small">
+          <span className="w-5 shrink-0 text-right text-fg-4">{i + 1}.</span>
+          <span className="min-w-0 flex-1 break-words">{e}</span>
+          <button type="button" aria-label="删除这条" className="press shrink-0 text-fg-3 hover:text-fg-1" onClick={() => void remove(i + 1)}>
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )) : <div className="text-caption text-fg-3">还没有记忆。Agent 在这个会话里用 lark memory add 记下的内容会出现在这里。</div>}
+      <div className="mt-1 flex gap-2">
+        <Input
+          value={draft}
+          maxLength={500}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void add() } }}
+          placeholder="添加一条，回车保存"
+          className="text-small"
+        />
+      </div>
+      <div className="text-caption text-fg-4">已用 {data.used}/{data.limit} 字 · 只在这个会话里可见</div>
+    </div>
+  )
+}
+
+/** 只处理这些会话: 私聊和群聊一视同仁,每个会话一行,有自己的工作目录和独立记忆 */
+function ConversationList({ accountId, value, configs, onChange }: { accountId: string; value: string[]; configs: ChatConfig[]; onChange: (ids: string[], configs: ChatConfig[]) => void }) {
+  const [names, setNames] = useState<Record<string, ChatTarget>>({})
+  const [open, setOpen] = useState<string | null>(null)
+  const base = `/accounts/${enc(accountId)}`
+  useEffect(() => {
+    const missing = value.filter((id) => !names[id])
+    if (missing.length) {
+      api<ChatTarget[]>('GET', `${base}/chat-targets?ids=${enc(missing.join(','))}`)
+        .then((ts) => setNames((cur) => ({ ...cur, ...Object.fromEntries(ts.map((t) => [t.id, t])) })))
+        .catch(() => undefined)
+    }
+  }, [value.join(','), base])
+  const cfgOf = (id: string): ChatConfig => configs.find((c) => c.chat_id === id) ?? { chat_id: id, workdir: '', senders: [] }
+  const update = (id: string, patch: Partial<ChatConfig>) => {
+    const next = { ...cfgOf(id), ...patch }
+    const rest = configs.filter((c) => c.chat_id !== id)
+    onChange(value, next.workdir || next.senders.length ? [...rest, next] : rest)
+  }
+  const remove = (id: string) => onChange(value.filter((x) => x !== id), configs.filter((c) => c.chat_id !== id))
+
+  return (
+    <div className="flex flex-col gap-2">
+      {value.map((id) => {
+        const t = names[id]
+        const name = t?.name || id
+        return (
+          <div key={id} className="flex flex-col gap-2">
+            <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto_auto]">
+              <div className="flex min-w-0 items-center gap-2" title={`会话 ID ${id}`}>
+                <Avatar src={t?.avatar || `/api/accounts/${enc(accountId)}/avatars/chat/${id}`} name={name} size="sm" />
+                <span className="truncate text-small font-medium">{name}</span>
+                {t && <span className="shrink-0 rounded-full bg-fill-2 px-1.5 text-caption text-fg-3">{t.kind === 'p2p' ? '私聊' : '群聊'}</span>}
+              </div>
+              <Input value={cfgOf(id).workdir} onChange={(e) => update(id, { workdir: e.target.value })} placeholder="工作目录（可选），留空用全局工作目录" className="font-mono text-small" />
+              <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(open === id ? null : id)}>
+                记忆
+                <ChevronRight className={cn('size-3.5 transition-transform', open === id && 'rotate-90')} />
+              </Button>
+              <Button type="button" variant="ghost" aria-label={`移除 ${name}`} onClick={() => remove(id)}>
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+            {t?.kind === 'group' && (
+              <div className="sm:pl-[calc(14rem+0.5rem)]">
+                <PeopleInput accountId={accountId} value={cfgOf(id).senders} onChange={(v) => update(id, { senders: v })} placeholder="只回复这些人（可选），留空回复群里所有人" />
+              </div>
+            )}
+            {open === id && <ChatMemory accountId={accountId} chatId={id} />}
+          </div>
+        )
+      })}
+      <ChatInput
+        accountId={accountId}
+        value={[]}
+        onChange={(v) => { if (v[0] && !value.includes(v[0])) onChange([...value, v[0]], configs) }}
+        placeholder={value.length ? '搜索人或群添加' : '搜索人或群添加；留空则处理所有会话'}
+      />
     </div>
   )
 }
@@ -143,7 +366,7 @@ export function SettingsPage({ account: a }: { account: Account }) {
       setSaved(v)
       setS(v)
       const t = v.triggers
-      setMore([t.chat_types, t.include_chats, t.exclude_chats, t.include_senders, t.exclude_senders].some((x) => x.length > 0))
+      setMore([t.chat_types, t.exclude_chats, t.exclude_senders].some((x) => x.length > 0))
     })
     api<Runtime[]>('GET', '/runtimes').then(setRuntimes).catch(() => {})
   }, [a.id])
@@ -324,6 +547,18 @@ export function SettingsPage({ account: a }: { account: Account }) {
                   <TagInput value={s.triggers.keywords} onChange={(v) => trig('keywords', v)} placeholder="命中任一即可，回车添加" />
                 </div>
               </div>
+              <div className="flex flex-col gap-1.5">
+                <div>
+                  <div className="text-small font-medium">只处理这些会话</div>
+                  <div className="text-caption text-fg-3">私聊和群聊都可以加。每个会话有自己的工作目录和独立记忆，互不可见；没列出的会话（比如和自己的会话）用全局工作目录和共用记忆。</div>
+                </div>
+                <ConversationList
+                  accountId={a.id}
+                  value={s.triggers.include_chats}
+                  configs={s.chat_configs}
+                  onChange={(ids, cs) => setS({ ...s, triggers: { ...s.triggers, include_chats: ids }, chat_configs: cs })}
+                />
+              </div>
               <button type="button" className="flex items-center gap-1 self-start text-small text-fg-3 hover:text-fg-1" onClick={() => setMore(!more)}>
                 <ChevronRight className={cn('size-3.5 transition-transform', more && 'rotate-90')} />
                 更多条件
@@ -341,21 +576,19 @@ export function SettingsPage({ account: a }: { account: Account }) {
                     </div>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
-                    {([['include_chats', '只处理这些会话 ID'], ['exclude_chats', '忽略这些会话 ID']] as const).map(([k, l]) => (
-                      <div key={k} className="flex flex-col gap-1.5">
-                        <span className="text-small font-medium">{l}</span>
-                        <TagInput value={s.triggers[k]} onChange={(v) => trig(k, v)} />
-                      </div>
-                    ))}
-                    {([['include_senders', '只处理这些发送者'], ['exclude_senders', '忽略这些发送者']] as const).map(([k, l]) => (
+                    {([['exclude_senders', '忽略这些发送者']] as const).map(([k, l]) => (
                       <div key={k} className="flex flex-col gap-1.5">
                         <span className="text-small font-medium">{l}</span>
                         <PeopleInput accountId={a.id} value={s.triggers[k]} onChange={(v) => trig(k, v)} />
                       </div>
                     ))}
                   </div>
-                  {s.triggers.include_senders.length > 0 && (
-                    <Field label="名单外的人触发时回复（可选）" hint="不在「只处理这些发送者」里的人触发 Agent 时，自动回这句话。留空则不回复。">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-small font-medium">忽略这些会话</span>
+                    <ChatInput accountId={a.id} value={s.triggers.exclude_chats} onChange={(v) => trig('exclude_chats', v)} />
+                  </div>
+                  {s.chat_configs.some((c) => c.senders.length > 0) && (
+                    <Field label="名单外的人触发时回复（可选）" hint="群聊里不在「只回复这些人」名单上的人触发 Agent 时，自动回这句话。留空则不回复。">
                       <Input value={s.deny_reply} maxLength={500} onChange={(e) => set('deny_reply', e.target.value)} placeholder="例如：抱歉，这个助手只为部分同事服务。" />
                     </Field>
                   )}
@@ -365,7 +598,7 @@ export function SettingsPage({ account: a }: { account: Account }) {
             </Card>
           </Section>
 
-          <Section id="memory" title="长期记忆" note="Agent 用 lark memory 记下长期有用的信息，比如人物、偏好和约定。所有会话共用，最多 2000 字。">
+          <Section id="memory" title="长期记忆" note="Agent 用 lark memory 记下长期有用的信息，比如人物、偏好和约定。这里是共用记忆，给没有单独列出的会话用；「只处理这些会话」里的会话各有独立记忆，在那里展开查看。每份最多 2000 字。">
             <Card className="px-5 py-2">
               <div className="divide-y divide-line-1">
                 <SwitchRow
