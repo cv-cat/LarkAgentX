@@ -18,6 +18,8 @@
 
 LarkAgentX 让你的飞书账号直连本地的 coding agent。扫码登录后，收到的消息交给本机的 Claude Code 或 Codex 处理，回复以你的账号发出。无需配置飞书机器人，飞书和 Lark 都支持。
 
+> 飞书协议来自 [OpenFeiShuApis](https://github.com/cv-cat/OpenFeiShuApis)。
+
 <div align="center">
 
 <a href="https://api.openai-next.com">
@@ -27,7 +29,7 @@ LarkAgentX 让你的飞书账号直连本地的 coding agent。扫码登录后�
   </picture>
 </a>
 
-<sub>赞助：[Vectrust](https://api.openai-next.com) @ OpenDev Org & NextRouter Alliance · [想出现在这里？](mailto:992822653@qq.com)</sub>
+<sub>[Vectrust](https://api.openai-next.com) @ OpenDev Org & NextRouter Alliance</sub>
 
 </div>
 

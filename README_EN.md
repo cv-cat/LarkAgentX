@@ -18,6 +18,8 @@
 
 LarkAgentX connects your own Feishu account to a coding agent on your machine. After a QR-code login, incoming messages go to your local Claude Code or Codex, and replies are sent from your account. No Feishu bot to set up. Feishu and Lark are both supported.
 
+> The Feishu protocol comes from [OpenFeiShuApis](https://github.com/cv-cat/OpenFeiShuApis).
+
 <div align="center">
 
 <a href="https://api.openai-next.com">
@@ -27,7 +29,7 @@ LarkAgentX connects your own Feishu account to a coding agent on your machine. A
   </picture>
 </a>
 
-<sub>Sponsored by [Vectrust](https://api.openai-next.com) @ OpenDev Org & NextRouter Alliance · [Want to appear here?](mailto:992822653@qq.com)</sub>
+<sub>[Vectrust](https://api.openai-next.com) @ OpenDev Org & NextRouter Alliance</sub>
 
 </div>
 
