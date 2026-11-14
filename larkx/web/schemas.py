@@ -38,10 +38,17 @@ class TriggersIn(BaseModel):
     self_chat_enabled: bool = False      # 「和自己的会话」里亲手发的是否处理
 
 
+class ChatConfigIn(BaseModel):
+    """「只处理这些会话」里一个会话(私聊或群聊)单独的设置。记忆不在这里,走 /memory?chat= 接口。"""
+    chat_id: str = Field(..., min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
+    workdir: str = Field('', max_length=500)
+    senders: List[str] = Field(default_factory=list, max_length=200)   # 群聊里只回复这些人,空 = 所有人
+
+
 class SettingsIn(BaseModel):
     remark: str = Field('', max_length=40)                # 备注名,可留空(留空显示飞书里的姓名)
     autostart: bool = False
-    agent_backend: Literal['claude', 'codex', 'none']
+    agent_backend: Literal['claude', 'codex', 'trae', 'doubao', 'pi', 'opencode', 'cursor', 'none']
     # 模型名会作为命令行参数传给 agent CLI,不允许以 - 开头,免得被当成别的开关
     agent_model: str = Field('', max_length=100, pattern=r'^([A-Za-z0-9][A-Za-z0-9_.:/-]*)?$')
     workdir: str = Field('', max_length=500)
@@ -57,6 +64,7 @@ class SettingsIn(BaseModel):
     memory_enabled: bool = False
     memory_review_at: str = Field('00:00', pattern=r'^(([01]\d|2[0-3]):[0-5]\d)?$')   # 每日回顾时间,空 = 不回顾
     triggers: TriggersIn = Field(default_factory=TriggersIn)
+    chat_configs: List[ChatConfigIn] = Field(default_factory=list, max_length=200)
 
 
 class SendIn(BaseModel):

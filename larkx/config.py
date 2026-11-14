@@ -30,6 +30,7 @@ DEFAULTS = {
     "deny_reply": "",
     "memory_enabled": False,
     "memory_review_at": "00:00",
+    "chat_configs": [],        # [{chat_id, workdir}]「只处理这些会话」里每个会话(私聊或群聊)单独的设置
     "triggers": {
         "prefix": "",
         "chat_types": [],
@@ -46,7 +47,8 @@ DEFAULTS = {
 
 # 可以按账号覆盖(web 里设置)的配置项
 SETTING_KEYS = ("agent_backend", "agent_model", "workdir", "agent_timeout", "system_prompt", "context_scope", "mark_read", "reply_in_topic",
-                "reply_mode", "reply_signature", "ack_reaction", "deny_reply", "memory_enabled", "memory_review_at", "triggers")
+                "reply_mode", "reply_signature", "ack_reaction", "deny_reply", "memory_enabled", "memory_review_at", "triggers",
+                "chat_configs")
 
 TRIGGER_ENV = {
     "prefix": "LARKX_TRIGGER_PREFIX",

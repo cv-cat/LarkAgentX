@@ -19,6 +19,20 @@ STALE_SECONDS = 600
 REVIEW_KEY = 'memory-review'
 
 
+def chat_config(cfg: dict, chat_id) -> dict:
+    """「只处理这些会话」里给这个会话(私聊或群聊)单独做的设置,没有返回 {}。"""
+    rows = cfg.get('chat_configs')
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and str(row.get('chat_id')) == str(chat_id):
+            return row
+    return {}
+
+
+def workdir_for(cfg: dict, chat_id) -> str:
+    """这个会话单独设置的工作目录,没设返回空(用全局工作目录)。"""
+    return (chat_config(cfg, chat_id).get('workdir') or '').strip()
+
+
 def _ts(msg: dict) -> str:
     t = msg.get('create_time')
     if not t:
@@ -140,7 +154,8 @@ class AgentDispatcher:
             return 'skip'
         if t.get('group_at_only') and type_name in ('group', 'topic_group') and (not msg.get('at_me')):
             return 'skip'
-        senders = [str(x) for x in t.get('include_senders') or []]
+        # 「只回复这些人」是会话自己的设置(群聊里用);旧的全局 include_senders 只在会话没单独设置时兜底
+        senders = [str(x) for x in chat_config(self.cfg, chat_id).get('senders') or t.get('include_senders') or []]
         if senders and sender_id not in senders and not self_chat:
             return 'denied'
         return 'ok'
@@ -298,11 +313,12 @@ class AgentDispatcher:
     def _account_flag(self) -> str:
         return '' if self.account_id == accounts.DEFAULT_ID else f' --account {self.account_id}'
 
-    def _memory_prefix(self, session_key: str) -> str:
-        """开了长期记忆时,这个会话第一次处理、或者记忆变了,才附上最新的记忆。"""
+    def _memory_prefix(self, session_key: str, chat_id: str = '') -> str:
+        """开了长期记忆时,这个会话第一次处理、或者记忆变了,才附上最新的记忆。
+        列在「只处理这些会话」里的会话附它自己的独立记忆,其余附共用记忆。"""
         if not self.cfg.get('memory_enabled'):
             return ''
-        block = memory.prompt_block(self.account_id)
+        block = memory.prompt_block(self.account_id, memory.scope_for(self.cfg, chat_id))
         if self.memory_seen.get(session_key) == block:
             return ''
         self.memory_seen[session_key] = block
@@ -322,12 +338,16 @@ class AgentDispatcher:
             lead = self.cfg.get('system_prompt') or INSTRUCTIONS
         reply_cmd = f'lark send {chat_id} "<回复内容>"' + self.reply_flags(msg) + acct
         rules = f'要回复就执行: {reply_cmd}\n' + OUTPUT_RULES + '\n' + SEND_HELP
-        return self._memory_prefix(session_key) + body + '\n\n' + lead + '\n' + rules
+        return self._memory_prefix(session_key, chat_id) + body + '\n\n' + lead + '\n' + rules
 
     async def handle_message(self, session_key: str, msg: dict):
         prompt = self.build_prompt(session_key, msg)
         try:
-            out = await self.backend.run(session_key, prompt, chat_id=str(msg.get('chat_id') or ''), anchor=(msg.get('anchor') or ''))
+            kwargs = {}
+            wd = workdir_for(self.cfg, msg.get('chat_id') or '')
+            if wd:
+                kwargs['workdir'] = wd
+            out = await self.backend.run(session_key, prompt, chat_id=str(msg.get('chat_id') or ''), anchor=(msg.get('anchor') or ''), **kwargs)
         finally:
             # 第一轮没跑成功时会话还没建立(下次会换一个新会话),记忆下次要重新附上
             if not self.backend.session_started(session_key):

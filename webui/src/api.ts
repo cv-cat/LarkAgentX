@@ -111,6 +111,23 @@ export interface Settings {
   memory_enabled: boolean
   memory_review_at: string
   triggers: Triggers
+  chat_configs: ChatConfig[]
+}
+
+/** 「只处理这些会话」里一个会话(私聊或群聊)单独的设置 */
+export interface ChatConfig {
+  chat_id: string
+  workdir: string
+  senders: string[]
+}
+
+/** 会话名单里的一项: 群(kind=group,id 是会话 id)、私聊(kind=p2p,id 是会话 id);搜索结果里的人是 kind=user,id 是 user_id */
+export interface ChatTarget {
+  kind: 'user' | 'group' | 'p2p'
+  id: string
+  name: string
+  desc: string
+  avatar: string
 }
 
 export interface Person {

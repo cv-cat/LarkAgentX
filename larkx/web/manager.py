@@ -14,7 +14,7 @@ from loguru import logger
 
 from .. import accounts, memory, profile, tasks
 from ..agent import get_backend
-from ..agent.backend import BACKENDS
+from ..agent.backend import BACKENDS, find_binary
 from ..auth import AuthExpired, LarkAuth
 from ..client import LarkClient
 from ..listener import Listener
@@ -222,8 +222,34 @@ class Manager:
         self._drop_files(account_id)
 
     # ---------- 设置 ----------
+    def _migrate_senders(self, account_id: str):
+        """旧的全局「只处理这些发送者」挪到「只处理这些会话」里每个群聊的「只回复这些人」上,
+        行为不变(私聊本来就是一个人,不需要发送者名单)。只做一次:挪完全局名单清空。"""
+        meta = accounts.read_meta(account_id)
+        settings = dict(meta.get('settings') or {})
+        t = dict(settings.get('triggers') or {})
+        senders = [str(u) for u in t.get('include_senders') or []]
+        listed = [str(c) for c in t.get('include_chats') or []]
+        if not senders or not listed:
+            return
+        info = self.storage(account_id).chat_info(listed)
+        configs = {str(c['chat_id']): dict(c) for c in settings.get('chat_configs') or [] if isinstance(c, dict)}
+        for cid in listed:
+            if info.get(cid, ('', 0))[1] == 1:
+                continue
+            row = configs.setdefault(cid, {'chat_id': cid, 'workdir': '', 'senders': []})
+            if not row.get('senders'):
+                row['senders'] = senders
+        t['include_senders'] = []
+        settings['triggers'] = t
+        settings['chat_configs'] = list(configs.values())
+        accounts.update_meta(account_id, settings=settings)
+        self._apply_running(account_id)
+        logger.bind(account=account_id).info(f'全局「只处理这些发送者」({len(senders)} 人)已挪到各群聊的「只回复这些人」')
+
     def get_settings(self, account_id: str) -> dict:
         account_id = self.require(account_id)
+        self._migrate_senders(account_id)
         cfg = accounts.get_settings(account_id)
         meta = accounts.read_meta(account_id)
         return {
@@ -244,6 +270,7 @@ class Manager:
             'memory_enabled': bool(cfg['memory_enabled']),
             'memory_review_at': cfg['memory_review_at'],
             'triggers': cfg['triggers'],
+            'chat_configs': [r for r in (cfg.get('chat_configs') or []) if isinstance(r, dict)],
         }
 
     def save_settings(self, account_id: str, data: dict) -> dict:
@@ -252,6 +279,23 @@ class Manager:
         if workdir and not os.path.isdir(workdir):
             raise ValueError(f'工作目录不存在: {workdir}')
         data = {**data, 'workdir': workdir}
+        rows = []
+        listed = {str(c) for c in (data.get('triggers') or {}).get('include_chats') or []}
+        for row in data.get('chat_configs') or []:
+            if str(row['chat_id']) not in listed:
+                continue            # 从名单里删掉的会话,它的设置一起去掉
+            path = os.path.expanduser((row.get('workdir') or '').strip())
+            if path and not os.path.isdir(path):
+                raise ValueError(f'工作目录不存在: {path}')
+            senders = [str(u) for u in row.get('senders') or [] if _ID.fullmatch(str(u))]
+            if path or senders:
+                rows.append({'chat_id': str(row['chat_id']), 'workdir': path, 'senders': senders})
+        data['chat_configs'] = rows
+        t = data.get('triggers') or {}
+        for key in ('include_chats', 'exclude_chats'):
+            bad = [c for c in t.get(key) or [] if str(c).startswith('oc_')]
+            if bad:
+                raise ValueError(f'{bad[0]} 是开放平台的会话 ID,这里用不了。请在输入框里按名字搜索群或人来添加')
         accounts.update_meta(account_id, name=data['remark'].strip(), autostart=data['autostart'])
         accounts.save_settings(account_id, data)
         return {'applied': self._apply_running(account_id)}
@@ -517,25 +561,75 @@ class Manager:
         return [{'id': i, 'name': names.get(i) or self._names.get((account_id, i)) or '', 'desc': '',
                  'avatar': f'/api/accounts/{account_id}/avatars/user/{i}'} for i in ids]
 
-    # ---------- 长期记忆、定时任务 ----------
-    def memory(self, account_id: str) -> dict:
+    def chat_targets(self, account_id: str, query: str = '', ids=(), groups_only: bool = False) -> list:
+        """会话名单用: 按名字搜人和群(q),或者给已有的会话 id 配上名字(ids)。在线程里调。
+        搜到的人 kind=user、id 是 user_id,加进名单前要用 dm_chat 换成和他的私聊会话 id。"""
         account_id = self.require(account_id)
-        items = memory.entries(account_id)
+        base = f'/api/accounts/{account_id}/avatars'
+        if query:
+            out = []
+            for r in self.api_client(account_id).search(query) or []:
+                rid = str(r.get('id') or '')
+                kind = r.get('type')
+                if kind in (('group',) if groups_only else ('user', 'group')) and _ID.fullmatch(rid):
+                    out.append({'kind': kind, 'id': rid, 'name': _plain(r.get('title')), 'desc': _plain(r.get('summary')),
+                                'avatar': f'{base}/{"user" if kind == "user" else "chat"}/{rid}'})
+            return out[:30]
+        ids = [str(i) for i in ids if _ID.fullmatch(str(i))][:200]
+        info = self.storage(account_id).chat_info(ids)
+        peers = self.storage(account_id).p2p_peers([c for c in ids if info.get(c, ('', 0))[1] == 1], LarkAuth(account_id).user_id)
+        out = []
+        for cid in ids:
+            name, ctype = info.get(cid, ('', 0))
+            if not name and ctype != 1:
+                try:
+                    name = self.api_client(account_id).get_group_name(cid) or ''
+                except Exception:
+                    name = ''
+                if name:
+                    self.storage(account_id).update_chat_name(cid, name, ctype or 2)
+            avatar = f'{base}/user/{peers[cid]}' if ctype == 1 and peers.get(cid) else f'{base}/chat/{cid}'
+            out.append({'kind': 'p2p' if ctype == 1 else 'group', 'id': cid, 'name': name, 'desc': '', 'avatar': avatar})
+        return out
+
+    def dm_chat(self, account_id: str, user_id: str, name: str = '') -> dict:
+        """和这个人的私聊会话 id(没聊过会新建会话,不会发消息)。在线程里调。"""
+        account_id = self.require(account_id)
+        if not _ID.fullmatch(str(user_id)):
+            raise ValueError('user_id 不合法')
+        chat_id = self.api_client(account_id).create_chat(str(user_id))
+        if not chat_id:
+            raise ValueError('拿不到和这个人的私聊会话')
+        chat_id = str(chat_id)
+        if name:
+            info = self.storage(account_id).chat_info([chat_id])
+            if not info.get(chat_id, ('', 0))[0]:
+                self.storage(account_id).update_chat_name(chat_id, name, 1)
+        return {'kind': 'p2p', 'id': chat_id, 'name': name, 'desc': '', 'avatar': f'/api/accounts/{account_id}/avatars/user/{user_id}'}
+
+    # ---------- 长期记忆、定时任务 ----------
+    def memory(self, account_id: str, chat: str = '') -> dict:
+        """chat 为空: 共用记忆;否则这个会话的独立记忆。"""
+        account_id = self.require(account_id)
+        try:
+            items = memory.entries(account_id, chat)
+        except memory.MemoryEditError as e:
+            raise ValueError(str(e))
         return {'entries': items, 'used': memory.used(items), 'limit': memory.MEMORY_LIMIT,
                 'last_review': accounts.read_meta(account_id).get('memory_review_last') or ''}
 
-    def memory_change(self, account_id: str, action: str, n: int = 0, text: str = '') -> dict:
+    def memory_change(self, account_id: str, action: str, n: int = 0, text: str = '', chat: str = '') -> dict:
         account_id = self.require(account_id)
         try:
             if action == 'add':
-                memory.add(account_id, text)
+                memory.add(account_id, text, chat)
             elif action == 'edit':
-                memory.edit(account_id, n, text)
+                memory.edit(account_id, n, text, chat)
             else:
-                memory.remove(account_id, n)
+                memory.remove(account_id, n, chat)
         except memory.MemoryEditError as e:
             raise ValueError(str(e))
-        return self.memory(account_id)
+        return self.memory(account_id, chat)
 
     def memory_review(self, account_id: str) -> dict:
         """「立即回顾」。在线程里调(要等后台确认开始了没有)。"""
@@ -642,7 +736,7 @@ class Manager:
         for key, info in BACKENDS.items():
             if not info['binary']:
                 continue
-            path = shutil.which(info['binary'])
+            path = find_binary(key)
             version = ''
             if path:
                 try:
@@ -651,7 +745,7 @@ class Manager:
                     version = text.splitlines()[0][:80] if text else ''
                 except Exception:
                     version = ''
-            out.append({'id': key, 'label': info['label'], 'binary': info['binary'], 'installed': bool(path),
+            out.append({'id': key, 'label': info['label'], 'binary': os.path.basename(path) if path else info['binary'], 'installed': bool(path),
                         'path': path or '', 'version': version})
         self._runtime_cache['v'] = (now, out)
         return out
@@ -660,7 +754,7 @@ class Manager:
         from .. import __version__
         return {
             'version': __version__,
-            'backends': [{'id': k, 'label': v['label'], 'installed': (not v['binary']) or bool(shutil.which(v['binary']))}
+            'backends': [{'id': k, 'label': v['label'], 'installed': (not v['binary']) or bool(find_binary(k))}
                          for k, v in BACKENDS.items()],
             'regions': [{'id': r.name, 'label': r.label} for r in REGIONS.values()],
             'server_time': time.time(),

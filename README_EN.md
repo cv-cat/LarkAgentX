@@ -10,13 +10,13 @@
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=FFD43B&labelColor=232838)](pyproject.toml)
 [![GitHub stars](https://img.shields.io/github/stars/cv-cat/LarkAgentX?style=flat-square&logo=github&labelColor=232838&color=E3A008)](https://github.com/cv-cat/LarkAgentX/stargazers)
 [![Feishu · Lark](https://img.shields.io/badge/platform-Feishu%20%C2%B7%20Lark-3370FF?style=flat-square&labelColor=232838)](#quick-start)
-[![Claude Code · Codex](https://img.shields.io/badge/agent-Claude%20Code%20%C2%B7%20Codex-D97757?style=flat-square&labelColor=232838)](#why-larkagentx)
+[![Claude Code · Codex · TRAE · Doubao · Pi · opencode · Cursor](https://img.shields.io/badge/agent-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20TRAE%20%C2%B7%20Doubao%20%C2%B7%20Pi%20%C2%B7%20opencode%20%C2%B7%20Cursor-D97757?style=flat-square&labelColor=232838)](#why-larkagentx)
 
 [Website](https://larkagentx.cvcat.site) · [简体中文](README.md) · **English**
 
 </div>
 
-LarkAgentX connects your own Feishu account to a coding agent on your machine. After a QR-code login, incoming messages go to your local Claude Code or Codex, and replies are sent from your account. No Feishu bot to set up. Feishu and Lark are both supported.
+LarkAgentX connects your own Feishu account to a coding agent on your machine. After a QR-code login, incoming messages go to a local coding agent (Claude Code, Codex, TRAE CLI, Doubao Work, Pi, opencode or Cursor CLI), and replies are sent from your account. No Feishu bot to set up. Feishu and Lark are both supported.
 
 > The Feishu protocol comes from [OpenFeiShuApis](https://github.com/cv-cat/OpenFeiShuApis).
 
@@ -41,7 +41,7 @@ pip install -e .
 lark web            # open http://127.0.0.1:8765 and add an account by QR code
 ```
 
-Claude Code or Codex must be installed on the same machine. Scan with the scanner inside the Feishu app.
+One of the agent CLIs (`claude`, `codex`, `traecli`, `doubao`, `pi`, `opencode` or `cursor-agent`) must be installed and logged in on the same machine. Scan with the scanner inside the Feishu app.
 
 ## Web console
 
@@ -55,7 +55,7 @@ Accounts, chat history, reply modes, the agent and trigger rules are all managed
 <img src="static/resource/mascot/laptop.webp" alt="The mascot typing on a laptop" width="150" align="right">
 
 - **No bot.** Messages go in and out through your own Feishu account.
-- **Your local agent.** Claude Code or Codex, with a separate context for every chat.
+- **Your local agent.** Claude Code, Codex, TRAE CLI, Doubao Work, Pi, opencode or Cursor CLI, switchable under Settings → Agent, with a separate context for every chat.
 - **Multiple accounts.** Feishu and Lark accounts can run side by side; an account only ever runs in one place.
 - **Local data.** Logins and messages stay in `~/.larkx/`.
 
