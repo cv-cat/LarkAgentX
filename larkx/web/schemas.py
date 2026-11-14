@@ -41,7 +41,7 @@ class TriggersIn(BaseModel):
 class SettingsIn(BaseModel):
     remark: str = Field('', max_length=40)                # 备注名,可留空(留空显示飞书里的姓名)
     autostart: bool = False
-    agent_backend: Literal['claude', 'codex', 'none']
+    agent_backend: Literal['claude', 'codex', 'trae', 'doubao', 'pi', 'opencode', 'cursor', 'none']
     # 模型名会作为命令行参数传给 agent CLI,不允许以 - 开头,免得被当成别的开关
     agent_model: str = Field('', max_length=100, pattern=r'^([A-Za-z0-9][A-Za-z0-9_.:/-]*)?$')
     workdir: str = Field('', max_length=500)

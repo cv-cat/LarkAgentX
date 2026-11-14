@@ -14,7 +14,7 @@ from loguru import logger
 
 from .. import accounts, memory, profile, tasks
 from ..agent import get_backend
-from ..agent.backend import BACKENDS
+from ..agent.backend import BACKENDS, find_binary
 from ..auth import AuthExpired, LarkAuth
 from ..client import LarkClient
 from ..listener import Listener
@@ -642,7 +642,7 @@ class Manager:
         for key, info in BACKENDS.items():
             if not info['binary']:
                 continue
-            path = shutil.which(info['binary'])
+            path = find_binary(key)
             version = ''
             if path:
                 try:
@@ -651,7 +651,7 @@ class Manager:
                     version = text.splitlines()[0][:80] if text else ''
                 except Exception:
                     version = ''
-            out.append({'id': key, 'label': info['label'], 'binary': info['binary'], 'installed': bool(path),
+            out.append({'id': key, 'label': info['label'], 'binary': os.path.basename(path) if path else info['binary'], 'installed': bool(path),
                         'path': path or '', 'version': version})
         self._runtime_cache['v'] = (now, out)
         return out
@@ -660,7 +660,7 @@ class Manager:
         from .. import __version__
         return {
             'version': __version__,
-            'backends': [{'id': k, 'label': v['label'], 'installed': (not v['binary']) or bool(shutil.which(v['binary']))}
+            'backends': [{'id': k, 'label': v['label'], 'installed': (not v['binary']) or bool(find_binary(k))}
                          for k, v in BACKENDS.items()],
             'regions': [{'id': r.name, 'label': r.label} for r in REGIONS.values()],
             'server_time': time.time(),
